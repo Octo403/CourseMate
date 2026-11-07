@@ -11,6 +11,15 @@ from .errors import AgentError, error_info
 from .models import AnswerPayload, ModelCall
 
 
+def create_model(settings):
+    if settings.mode != 'live':
+        return None
+    if settings.llm_provider == 'codex_chatgpt':
+        from .online import ChatGPTModel
+        return ChatGPTModel(settings)
+    return CompatibleModel(settings)
+
+
 class CompatibleModel:
     """Small HTTP adapter for providers exposing /chat/completions and /embeddings."""
     supports_tool_reference_schema = True

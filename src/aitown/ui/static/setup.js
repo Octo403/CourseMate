@@ -10,11 +10,11 @@ function renderSetupDetails(data){
 async function showSetup(){
  $('first-run-setup').hidden=false;
  await toggleSettings(true);
- if(state.modelSettings?.search_mode==='none'){
+ if(state.modelSettings?.search_mode==='none'&&(state.bootstrap?.data!=='study'||state.bootstrap?.hosted)){
   $('question-model-mode').value='api';
   modelFieldVisibility();
  }
- $('setup-status').textContent='可先配置模型，也可以先导入资料、使用本地筛选。';
+ $('setup-status').textContent=state.bootstrap?.hosted?'填写你自己的模型 API 地址、Key 和型号；配置与学习资料仅用于当前浏览器空间。':state.bootstrap?.data==='study'?'可先收集资料；检索与解题需要当前 Windows 账户登录 ChatGPT。':'可先配置模型，也可以先导入资料、使用本地筛选。';
 }
 let setupShown=false;
 async function maybeShowSetup(){if(state.bootstrap?.setup_required&&!setupShown){setupShown=true;await showSetup();}}
@@ -40,6 +40,9 @@ $('finish-setup').onclick=async()=>{
 $('skip-setup').onclick=async()=>{
  if(state.busy)return;
  try{
+  if(state.bootstrap?.data==='study'){
+   await api('/api/setup-complete',{});await refreshBootstrap();$('first-run-setup').hidden=true;await openMaterials('course');return;
+  }
   const payload=modelSettingsPayload();payload.search_mode='none';
   if(!await modelSettingsJob('/api/model-settings',payload))return;
   await api('/api/setup-complete',{});await refreshBootstrap();

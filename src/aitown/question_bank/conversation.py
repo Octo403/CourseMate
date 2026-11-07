@@ -32,14 +32,14 @@ def previous_result(agent, state):
         run = agent.memory.conn.execute('SELECT reply_json FROM runtime_runs WHERE id=?', (row['request_id'],)).fetchone()
         if run and run[0]:
             reply = json.loads(run[0])
-            tools = [r for r in reply.get('skills', []) if r['ok'] and r['name'] in ('question_search', 'question_get') and r['data'].get('results')]
+            tools = [r for r in reply.get('skills', []) if r['ok'] and r['name'] in ('question_search', 'question_get', 'question_solve') and r['data'].get('results')]
             if tools:
                 return reply, tools[-1]['data']['results']
             if (reply.get('decision') or {}).get('confidence_reason')=='课程找题需要补充条件':
                 continue
             # An unrelated turn ends the active course context. Never revive an
             # old course query through a later personal conversation.
-            if not any(c['name'] in ('question_search', 'question_get', 'course_status') for c in reply.get('tool_calls', [])):
+            if not any(c['name'] in ('question_search', 'question_get', 'question_solve', 'course_status') for c in reply.get('tool_calls', [])):
                 return None, []
             return reply, []
     return None, []
@@ -56,7 +56,7 @@ def previous_search_arguments(agent, state):
                     return call['arguments']
             if (reply.get('decision') or {}).get('confidence_reason')=='课程找题需要补充条件':
                 continue
-            if not any(c['name'] in ('question_search', 'question_get', 'course_status') for c in reply.get('tool_calls', [])):
+            if not any(c['name'] in ('question_search', 'question_get', 'question_solve', 'course_status') for c in reply.get('tool_calls', [])):
                 break
     return {}
 
@@ -97,14 +97,24 @@ def decision(agent, state):
     if not pinned and (not (wants or refinement) or not (specific or previous_search or items)):
         return None
     def choose(calls):
+        from .study import state_in_query
+        selected_state = state_in_query(query)
+        for call in calls:
+            if call.name == 'question_search' and selected_state:
+                call.arguments['study_state'] = selected_state
         return Decision(intent='skill', query=query, original_question=original, calls=calls, plan=['skill'],
             confidence='high', confidence_reason='明确课程找题或本会话实际题目追问；课程来源独立读取')
-    if re.search('准备|进度|状态|更新|覆盖|新增|添加|加入|建立|整理|下载|获取.*(?:题库|知识库|资料)', query):
+    if agent.question_bank.uploaded_references:
+        count = re.search(r'([一二两三四五六七八九十]|\d+)道', query)
+        limit = min(10, int(count[1]) if count[1].isdigit() else 2 if count[1]=='两' else '一二三四五六七八九十'.index(count[1])+1) if count else 3
+        return choose([SkillCall(name='question_search', arguments={'course': course, 'query': query[:1000], 'limit': max(1, limit)})])
+    solving = bool(re.search('解答|求解|解这|解题|解析|标准答案|书面答案|方法归纳|解法|怎么做|怎么解|题的?答案|给.*答案',query)) and not re.search('来源答案|已有.*答案|官方答案|不要.*(?:答案|解答)|别.*(?:答案|解答)|不.*给.*答案|隐藏.*答案',query)
+    if not solving and re.search('准备|进度|状态|更新|覆盖|新增|添加|加入|建立|整理|下载|获取.*(?:题库|知识库|资料)', query):
         return choose([SkillCall(name='course_status', arguments={'course': course})])
     ordinal = re.search(r'第([一二三四五六七八九十]|\d+)(?:道|个)?题', query)
     reference_item = None
-    if ordinal:
-        n = int(ordinal[1]) if ordinal[1].isdigit() else '一二三四五六七八九十'.index(ordinal[1])+1
+    if ordinal or (solving and len(items)==1):
+        n = (int(ordinal[1]) if ordinal[1].isdigit() else '一二三四五六七八九十'.index(ordinal[1])+1) if ordinal else 1
         if n < 1 or n > len(items) or not items:
             return clarify('本会话还没有返回这么多道题，请先找题，再按结果顺序选择。')
         qid = items[n-1]['id']
@@ -114,8 +124,12 @@ def decision(agent, state):
         if re.search('同类型|同类|相似题|类似.*题',query) and re.search('找|再来|筛选|推荐',query):
             reference_item=current.results[0]
         else:
+            if solving:
+                return choose([SkillCall(name='question_solve', arguments={'question_id': qid})])
             answer = bool(re.search('答案|解答|解析', query)) and not re.search('别.*答案|不要.*答案|不.*给.*答案|隐藏.*答案', query)
             return choose([SkillCall(name='question_get', arguments={'question_ids': [qid], 'include_answer': answer})])
+    if solving and not re.search('找|筛选|推荐|同类',query):
+        return clarify('请先检索并选择一道题，或说明“解答第几题”。')
     args = {'course': course, 'query': query}
     explicit = {}
     follow = reference_item is not None or (not fresh and (refinement or bool(re.search('再找|同类|只看|按.*本会话', query))))
@@ -156,7 +170,7 @@ def decision(agent, state):
     count = re.search(r'([一二两三四五六七八九十]|\d+)道', query)
     if count:
         explicit['limit'] = min(10, int(count[1]) if count[1].isdigit() else 2 if count[1] == '两' else '一二三四五六七八九十'.index(count[1])+1)
-    if agent.question_bank.config.similar_provider == 'api':
+    if agent.question_bank.config.similar_provider == 'api' and not agent.settings.study_mode:
         try:
             from .api_model import QuestionAPI
             plan = QuestionAPI(agent.question_bank.config.api, agent.question_bank.config.root/'processed').plan(
@@ -174,7 +188,7 @@ def decision(agent, state):
 def render_results(skills):
     parts = []
     for skill in skills:
-        if not skill.ok or skill.name not in ('question_search', 'question_get', 'course_status'):
+        if not skill.ok or skill.name not in ('question_search', 'question_get', 'question_solve', 'course_status'):
             continue
         data = skill.data
         if skill.name == 'question_search':
@@ -220,6 +234,13 @@ def render_results(skills):
                         parts.append('答案缺口：'+'；'.join(a['missing']))
                 if not q['answers']:
                     parts.append('未发现可确认配对的来源答案。')
+            if skill.name == 'question_solve' and q.get('solution'):
+                solution=q['solution']
+                parts.append('ChatGPT 生成的书面参考解答：\n'+solution['written_answer'])
+                for method in solution['methods']:
+                    parts.append('方法：'+method['name']+'\n识别线索：'+method['recognition']+'\n关键思路：'+method['key_idea']+
+                        '\n通用步骤：'+'；'.join(method['steps'])+'\n适用条件：'+method['conditions']+'\n易错点：'+'；'.join(method['pitfalls']))
+                if solution['missing']:parts.append('待补充：'+'；'.join(solution['missing']))
         if data.get('missing_ids'):
             parts.append('部分题目已失效，请重新检索。')
         coverage = data.get('coverage', {})

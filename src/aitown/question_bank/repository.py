@@ -128,7 +128,8 @@ class BankRepository:
     def save_source(self, source: Source):
         self.conn.execute('''INSERT INTO sources(course_id,repository,path,member,url,size,category_hint,year_hint,exam_hint,discovered_at,checked_at)
             VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(course_id,repository,path,member) DO UPDATE SET
-            url=excluded.url,size=excluded.size,checked_at=excluded.checked_at,remote_removed=0''',
+            url=excluded.url,size=excluded.size,category_hint=excluded.category_hint,year_hint=excluded.year_hint,
+            exam_hint=excluded.exam_hint,checked_at=excluded.checked_at,remote_removed=0''',
             (source.course_id, source.repository, source.path, source.member, source.url, source.size,
              source.category_hint, source.year_hint, source.exam_hint, time.time(), time.time()))
         return self.conn.execute('SELECT id FROM sources WHERE course_id=? AND repository=? AND path=? AND member=?',
@@ -394,6 +395,8 @@ class BankRepository:
                 data.update(images=preview['images'],image_regions=preview['image_regions'],
                     preview_source_id=preview['source_id'],preview_number=preview['number'],preview_pages=preview['pages'])
             self.attach_previews(data)
+            from .parts import selection_parts
+            data['selection_parts'] = selection_parts(data)
             answers = self.conn.execute('''SELECT a.*,s.url,s.path,s.member FROM answers a
                 JOIN sources s ON s.id=a.source_id WHERE a.question_id IN ('''+','.join('?' for _ in group)+''') AND s.remote_removed=0
                 AND s.status IN ('ready','partial')''', data['occurrence_ids']).fetchall()
@@ -420,6 +423,18 @@ class BankRepository:
                         data['answers'].append(answer)
             results.append(data)
         return results
+
+    def question_pdf(self, data):
+        source = self.source(data.get('preview_source_id', data['source_id']))
+        if (source['member'] or source['path']).lower().endswith(('.doc', '.docx')):
+            path = self.path.parent/'processed'/str(source['id'])/'document.pdf'
+        else:
+            path = Path(source['local_path']) if source.get('local_path') else None
+        return path if path and path.suffix.lower()=='.pdf' and path.is_file() else None
+
+    def focus(self, data, numbers):
+        from .parts import focus_question
+        focus_question(data, numbers, self.question_pdf(data))
 
     def attach_previews(self, data):
         """Join images to this question's current source pages, including older imports."""
@@ -460,6 +475,8 @@ class BankRepository:
     def coverage(self, course):
         cid = self.course_id(course)
         sources = self.sources(cid)
+        removed = sum(s['remote_removed'] for s in sources)
+        sources = [s for s in sources if not s['remote_removed']]
         states = {}
         for s in sources:
             states[s['status']] = states.get(s['status'], 0) + 1
@@ -468,7 +485,7 @@ class BankRepository:
             'downloaded': sum(bool(s['local_path'] or s.get('raw_deleted_at')) for s in sources), 'states': states,
             'raw_retained': sum(bool(s['local_path']) and Path(s['local_path']).is_file() for s in sources),
             'raw_deleted': sum(bool(s.get('raw_deleted_at')) for s in sources),
-            'remote_removed': sum(s['remote_removed'] for s in sources),
+            'remote_removed': removed,
             'questions': len(self.rows(cid)), 'question_occurrences':len(self._rows(cid)),
             'years': sorted({q['year'] for q in self._rows(cid) if q['year'] is not None}),
             'last_checked': row['checked_at'] if row else None, 'discovery_error': row['discovery_error'] if row else None,

@@ -21,3 +21,10 @@ https://pymupdf.readthedocs.io/en/latest/about.html#license-and-copyright
 可选 7-Zip:
 https://www.7-zip.org/license.txt
 https://www.7-zip.org/download.html
+
+KaTeX 0.16.22（MIT）：
+https://github.com/KaTeX/KaTeX
+本地公式排版脚本与原始版权许可文件保存在：
+runtime/Lib/site-packages/aitown/ui/static/vendor/katex.min.js
+runtime/Lib/site-packages/aitown/ui/static/vendor/KATEX-LICENSE.txt
+该脚本随当前学习模式源码分发。

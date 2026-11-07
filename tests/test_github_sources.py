@@ -62,6 +62,55 @@ def test_transient_server_error_retries_and_uses_real_default_branch(monkeypatch
         remote.close()
 
 
+def test_discovery_requests_only_the_configured_repository(monkeypatch):
+    calls=[]
+    def handler(request):
+        calls.append(str(request.url))
+        assert request.url.path.startswith('/repos/victkk/FDU-Sharing')
+        if '/git/trees/' not in request.url.path:
+            return httpx.Response(200,json={'default_branch':'master'})
+        return httpx.Response(200,json={'truncated':False,'tree':[{'path':'public/resources/Test/exam.pdf','type':'blob','size':15}]})
+    install_transport(monkeypatch,handler)
+    remote=GithubSource(BankConfig())
+    try:courses,sources=remote.discover()
+    finally:remote.close()
+    assert len(calls)==2 and len(courses)==1
+    assert len(sources)==1 and sources[0].repository=='victkk/FDU-Sharing'
+
+
+@pytest.mark.parametrize('suffix',['.md','.pdf'])
+def test_worked_reference_notes_keep_body_without_indexing_numbered_solution_steps(tmp_path,suffix):
+    from aitown.question_bank.prepare import parse_file
+    path=tmp_path/('notes'+suffix)
+    text='1. Apply the proof\n2. Substitute the solution\n3. The answer follows'
+    if suffix=='.pdf':
+        fitz=pytest.importorskip('pymupdf')
+        with fitz.open() as document:
+            page=document.new_page();page.insert_text((30,40),text);document.save(path)
+    else:path.write_text(text,encoding='utf-8')
+    parsed=parse_file(path,{'category_hint':'material'},tmp_path/'out',BankConfig())
+    assert parsed.questions==[] and parsed.category=='material'
+    assert 'Substitute the solution' in '\n'.join(p.text for p in parsed.pages)
+    assert path.is_file() and not (tmp_path/'out').exists()
+
+
+def test_configured_repository_download_can_fall_back_to_contents_api(tmp_path,monkeypatch):
+    import base64
+    calls=[]
+    def handler(request):
+        calls.append(str(request.url))
+        if request.url.host=='raw.githubusercontent.com':return httpx.Response(503)
+        assert request.url.path=='/repos/victkk/FDU-Sharing/contents/public/resources/Test/exam.pdf'
+        return httpx.Response(200,json={'content':base64.b64encode(b'public sample').decode()})
+    install_transport(monkeypatch,handler)
+    remote=GithubSource(BankConfig())
+    source=Source(course_id='Test',repository='victkk/FDU-Sharing',path='public/resources/Test/exam.pdf',
+        url='https://raw.githubusercontent.com/victkk/FDU-Sharing/master/public/resources/Test/exam.pdf',size=13)
+    try:path=remote.download(source.model_dump(),tmp_path/'exam.pdf')
+    finally:remote.close()
+    assert path.read_bytes()==b'public sample' and len(calls)==2
+
+
 @pytest.mark.parametrize('response', [httpx.Response(200,text='<html>proxy-secret</html>'),
                                      httpx.Response(200,json={'default_branch':'master'})])
 def test_proxy_or_incomplete_json_does_not_replace_saved_catalog(tmp_path,monkeypatch,response):

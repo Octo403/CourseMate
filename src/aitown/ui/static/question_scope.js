@@ -11,7 +11,7 @@ function renderQuestionScope(){
  $('pinned-question-course').hidden=!course;
  $('question-course-label').textContent=course?'@'+course.name:'';
  $('question-scope-hint').textContent=course?'本会话只在此题库找题，点击 × 取消':'输入 @ 或点击“@ 题库”固定找题范围';
- $('message').placeholder=course?`在${course.name}中找题，可描述知识点、年份或题型`:'和 AnotherMe 聊聊，也可输入 @ 选择题库…';
+ $('message').placeholder=course?`在${course.name}中找题，或说“解答第一题”`:'输入 @ 选择课程，再描述知识点或要找的题…';
  if(course)$('current-scope').textContent='找题范围：'+course.name;
  if(typeof syncPreparationCourse==='function')syncPreparationCourse(course);
  closeQuestionMentions();

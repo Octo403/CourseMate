@@ -51,12 +51,22 @@ def main():
     correct.add_argument('--session', default='default')
     provider = sub.add_parser('provider-test')
     provider.add_argument('--output', type=Path)
-    ui=sub.add_parser('ui',help='本地浏览器界面，默认独立合成资料')
+    ui=sub.add_parser('ui',help='课程学习界面，使用 ChatGPT 找题与解题')
     ui.add_argument('--port',type=int,default=8501)
-    ui.add_argument('--data',choices=['synthetic','configured','wechat'],default='synthetic')
+    ui.add_argument('--data',choices=['study','synthetic','configured','wechat'],default='study')
     ui.add_argument('--directory',type=Path)
     ui.add_argument('--scope',default='')
+    hosted=sub.add_parser('hosted-ui',help='浏览器隔离的云端学习界面，须由 HTTPS 反向代理访问')
+    hosted.add_argument('--public-origin',required=True)
+    hosted.add_argument('--port',type=int,default=8501)
+    hosted.add_argument('--directory',type=Path,default=Path('data/hosted'))
+    hosted.add_argument('--allow-api-host',action='append',default=[])
     args = parser.parse_args()
+    if args.command=='hosted-ui':
+        from .ui.hosted import DEFAULT_API_HOSTS,serve_hosted
+        serve_hosted(public_origin=args.public_origin,port=args.port,directory=args.directory,
+                     allowed_api_hosts=DEFAULT_API_HOSTS|set(args.allow_api_host))
+        return
     try:
         settings = Settings.from_env(mode=(args.mode or 'demo') if args.command=='ui' else args.mode)
     except ValidationError as exc:

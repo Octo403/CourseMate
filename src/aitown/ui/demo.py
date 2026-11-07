@@ -15,6 +15,19 @@ from ..style import ProfileStore
 def settings_for_ui(installed, directory, *, data='synthetic', mode='demo', scope=''):
     directory=Path(directory)
     directory.mkdir(parents=True,exist_ok=True)
+    if data=='study':
+        # Learning has its own history and never opens the configured personal corpus.
+        return installed.model_copy(update={'mode':'live','llm_provider':'codex_chatgpt','study_mode':True,
+            'online_rerank':True,'model':installed.question_similar_model,'api_key':'',
+            'runtime_database':directory/'learning.sqlite3',
+            'memory_db':directory/'empty-legacy.sqlite3','checkpoint_db':directory/'learning-checkpoints.sqlite3',
+            'knowledge_dir':directory/'learning-knowledge','retrieval_database':directory/'learning.sqlite3',
+            'retrieval_index_dir':directory/'learning-retrieval','style_database':None,
+            'style_profile':None,'style_feedback':None,'style_scope':'','embedding_model':'',
+            'local_embedding_dir':None,'local_reranker_dir':None,'question_similar_provider':'codex_chatgpt',
+            'context_max_chars':14000,'retrieval_top_n':12,'retrieval_top_k':4,'rerank_threshold':.35,
+            'agent':installed.agent.model_copy(update={'persona':'支持日常对话与课程学习。知识问题优先检索本地资料，无依据时区分通用知识与个人事实，不编造经历。'}),
+            'question_extractor':'basic' if installed.question_extractor=='mineru' else installed.question_extractor})
     if data=='wechat':
         from .wechat import settings_for_wechat
         return settings_for_wechat(installed,directory,mode=mode,scope=scope)

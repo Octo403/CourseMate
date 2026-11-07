@@ -1,25 +1,26 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AnotherMe · 本地对话</title><link rel="stylesheet" href="/style.css"></head>
-<body>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AnotherMe · 课程学习</title><link rel="stylesheet" href="/style.css"></head>
+<body data-experience="study">
 <aside class="sidebar">
   <a class="brand" href="/" aria-label="AnotherMe 首页"><span class="brand-mark">A<span>·</span></span><span>AnotherMe<small>记忆，让对话有来处</small></span></a>
   <button id="new-session" class="primary wide">＋ 新的对话</button>
-  <label class="field-label" for="scope">新会话的资料范围</label><select id="scope" aria-label="新会话资料范围"></select>
+  <label class="field-label legacy-personal" for="scope">新会话的资料范围</label><select id="scope" class="legacy-personal" aria-label="新会话资料范围"></select>
   <div class="section-label">对话记录 <span id="session-count">0</span></div><nav id="sessions" aria-label="会话列表"></nav>
   <div class="sidebar-bottom"><span class="local-dot"></span><span>仅在本机打开<small id="data-badge">合成演示资料</small></span><button id="open-settings" class="icon-button" title="设置" aria-label="设置">⚙</button></div>
 </aside>
 <main>
-  <header class="topbar"><div><span class="eyebrow">你的对话伙伴</span><h1 id="session-title">新的对话</h1></div><div class="top-actions"><span id="mode-badge" class="badge">离线演示</span><button id="open-course-library" class="quiet">课程资料</button><button id="open-materials" class="quiet">个人资料</button><button id="settings-button" class="quiet">设置</button></div></header>
+  <header class="topbar"><div><span class="eyebrow">课程题库与学习积累</span><h1 id="session-title">新的学习会话</h1></div><div class="top-actions"><span id="mode-badge" class="badge">课程学习</span><button id="open-course-library" class="quiet">课程资料</button><button id="open-materials" class="quiet">我的学习</button><button id="settings-button" class="quiet">设置</button></div></header>
   <div id="notice" class="notice" role="status" hidden></div>
   <section id="conversation" class="conversation" aria-label="聊天内容">
-    <div id="welcome" class="welcome"><div class="hero-mark">A<span>·</span></div><span class="eyebrow">ANOTHER ME</span><h2>从一句话开始</h2><p>聊聊当下，也可以一起找回资料里的线索。<br>回答的依据，随时可以展开查看。</p><div id="suggestions" class="suggestions"><button data-question="青竹活动室最多坐几个人？"><span>查一份资料</span>活动室能坐几个人？<b>↗</b></button><button data-question="我喜欢咖啡还是茶？"><span>问一个偏好</span>我更喜欢喝什么？<b>↗</b></button><button data-question="计算 9 * 18"><span>做一点计算</span>9 人的材料费是多少？<b>↗</b></button></div><small id="welcome-note">这里的活动与表达样例均为合成素材。</small></div>
+    <div id="welcome" class="welcome"><div class="hero-mark">A<span>·</span></div><span class="eyebrow">ANOTHER ME</span><h2 id="welcome-title">从一句话开始</h2><p id="welcome-description">聊聊当下，也可以一起找回资料里的线索。<br>回答的依据，随时可以展开查看。</p><div id="suggestions" class="suggestions"><button data-question="青竹活动室最多坐几个人？"><span>查一份资料</span>活动室能坐几个人？<b>↗</b></button><button data-question="我喜欢咖啡还是茶？"><span>问一个偏好</span>我更喜欢喝什么？<b>↗</b></button><button data-question="计算 9 * 18"><span>做一点计算</span>9 人的材料费是多少？<b>↗</b></button></div><small id="welcome-note">这里的活动与表达样例均为合成素材。</small></div>
     <div id="turns" class="turns" aria-live="polite"></div>
   </section>
-  <footer class="composer-wrap"><div id="progress" class="progress" role="status" hidden><span class="spinner"></span><span id="progress-text">正在处理</span></div><div class="composer">
+  <footer class="composer-wrap"><div id="progress" class="progress" role="status" hidden><span class="spinner"></span><span id="progress-text">正在处理</span><details class="progress-details"><summary>处理进度</summary><ol id="progress-steps"></ol></details></div><div class="composer">
     <div class="question-scope-tools"><button id="choose-question-course" class="question-scope-button" aria-expanded="false" aria-controls="question-course-options">@ 题库</button><span id="pinned-question-course" class="question-course-chip" hidden><span id="question-course-label"></span><button id="clear-question-course" class="question-scope-button" aria-label="取消固定题库">×</button></span><small id="question-scope-hint">输入 @ 或点击“@ 题库”固定找题范围</small></div>
     <div id="question-course-options" class="question-course-options" aria-label="选择要固定的题库" hidden></div>
-    <textarea id="message" rows="2" placeholder="和 AnotherMe 聊聊，也可输入 @ 选择题库…" aria-label="消息输入" aria-controls="question-course-options"></textarea><div class="composer-bottom"><span id="current-scope">资料范围未选择</span><div><select id="scene" aria-label="回应场景"><option value="">自动场景</option><option value="agree">同意</option><option value="refuse">拒绝</option><option value="comfort">安慰</option><option value="explain">解释</option><option value="task">任务讨论</option><option value="uncertain">不确定</option><option value="chat">闲聊</option></select><button id="send" class="send" aria-label="发送消息">发送 ↑</button></div></div></div><p class="composer-note" id="composer-note">离线演示展示原文与工具结果，不是模型生成回答。Enter 发送 · Shift + Enter 换行</p></footer>
+    <div id="reference-selection" class="reference-selection" aria-label="待发送的参考题附件"></div>
+    <textarea id="message" rows="2" placeholder="和 AnotherMe 聊聊，也可输入 @ 选择题库…" aria-label="消息输入" aria-controls="question-course-options"></textarea><div class="composer-bottom"><div class="composer-left"><div class="reference-upload"><button id="attach-reference" type="button" aria-label="添加图片或文件找相似题" title="添加图片或文件找相似题 · 附件内容将交给所选在线模型识别">＋</button><input id="reference-files" type="file" multiple accept=".png,.jpg,.jpeg,.webp,.pdf,.doc,.docx,.txt,.md" hidden></div><span id="current-scope">资料范围未选择</span></div><div><select id="scene" aria-label="回应场景"><option value="">自动场景</option><option value="agree">同意</option><option value="refuse">拒绝</option><option value="comfort">安慰</option><option value="explain">解释</option><option value="task">任务讨论</option><option value="uncertain">不确定</option><option value="chat">闲聊</option></select><button id="send" class="send" aria-label="发送消息">发送 ↑</button></div></div></div><p class="composer-note" id="composer-note">离线演示展示原文与工具结果，不是模型生成回答。Enter 发送 · Shift + Enter 换行</p></footer>
 </main>
 <aside id="settings" class="settings" hidden aria-label="设置"><div class="panel-heading"><div><span class="eyebrow">应用偏好</span><h2>设置</h2></div><button id="close-settings" class="icon-button" aria-label="关闭设置">×</button></div>
   <div class="panel-scroll">
@@ -66,7 +67,7 @@
     <label for="mineru-sample-source">小样本原卷</label><select id="mineru-sample-source"></select><button id="mineru-sample" class="quiet">试解析一份 · 不替换题库</button>
     <p id="model-settings-status" class="model-status" role="status">尚未读取模型配置</p>
   </section>
-  <section class="model-form"><h3>个人资料回答模式</h3><select id="mode" aria-label="回答模式"><option value="demo">离线演示</option><option value="live">真实模型 · 本机</option></select><p id="model-note" class="muted">离线展示资料摘录和工具结果。</p>
+  <section class="model-form legacy-personal"><h3>个人资料回答模式</h3><select id="mode" aria-label="回答模式"><option value="demo">离线演示</option><option value="live">真实模型 · 本机</option></select><p id="model-note" class="muted">离线展示资料摘录和工具结果。</p>
     <p class="muted">便携版不附带大模型。先启动本机的 OpenAI 兼容模型服务，再填写下方连接；题库模型与个人资料模型分别配置。个人资料仅发送到本机地址。</p>
     <label for="local-model-url">本机模型 API 地址</label><input id="local-model-url" type="url" spellcheck="false" placeholder="http://127.0.0.1:8765/v1">
     <label for="local-model-id">本机服务加载的模型型号</label><input id="local-model-id" list="local-model-options" spellcheck="false" placeholder="读取型号或填写服务实际加载的名称"><datalist id="local-model-options"></datalist>
@@ -79,7 +80,7 @@
     <p id="local-model-status" class="model-status" role="status">尚未配置本机模型。</p>
   </section>
   <section><h3>本地体验版</h3><p id="document-compatibility" class="muted">PDF、DOCX、MD、TXT 在本机处理。</p><button id="reopen-setup" class="quiet">打开使用引导</button></section>
-  <section><h3>技能</h3><p class="muted">开关立即影响下一次调用。</p><div id="skills"></div></section>
+  <section class="legacy-personal"><h3>技能</h3><p class="muted">开关立即影响下一次调用。</p><div id="skills"></div></section>
   </div>
 </aside>
 <aside id="materials" class="settings material-panel" hidden aria-label="资料库"><div class="panel-heading"><div><span class="eyebrow">本地工作台</span><h2>资料库</h2></div><button id="close-materials" class="icon-button" aria-label="关闭资料库">×</button></div>
@@ -140,12 +141,14 @@
       <p class="muted"><a href="https://github.com/zhuzhangxue/wechat-chat-export/releases/tag/v1.3.5" target="_blank" rel="noopener noreferrer">获取微信导出工具 v1.3.5</a> · 仅使用你有权处理的聊天记录。清洗规则不能保证识别所有敏感内容，请在复核时检查。</p>
     </details><p id="wechat-storage" class="muted"></p>
   </section>
-  <section><div class="row"><h3>知识资料</h3><button id="refresh" class="quiet">刷新索引</button></div><div id="documents"></div><details class="import-form"><summary>＋ 导入 TXT / MD</summary><label class="file-label" for="file">选择本地文件<input id="file" type="file" accept=".txt,.md,text/plain,text/markdown"></label><input id="document-name" placeholder="文件名，例如：分享会.md" aria-label="导入文件名"><textarea id="document-content" rows="5" placeholder="也可以在此粘贴资料正文" aria-label="导入资料正文"></textarea><button id="import" class="primary wide">保存并建立索引</button><p class="muted">文件只发送到本机服务。重新保存同名文件会更新资料。</p></details></section>
+  <section id="knowledge-library-section"><div class="row"><h3>知识资料</h3><button id="refresh" class="quiet">刷新索引</button></div><p id="knowledge-library-note" class="muted">导入的资料保存在本机，重新保存同名文件会更新资料。</p><div id="documents"></div><details class="import-form"><summary>＋ 导入 TXT / MD</summary><label class="file-label" for="file">选择本地文件<input id="file" type="file" accept=".txt,.md,text/plain,text/markdown"></label><input id="document-name" placeholder="文件名，例如：Python基础.md" aria-label="导入文件名"><textarea id="document-content" rows="5" placeholder="也可以在此粘贴资料正文" aria-label="导入资料正文"></textarea><button id="import" class="primary wide">保存并建立索引</button></details></section>
   <section><h3>已复核的本人记忆</h3><p class="muted">仅当前范围的训练资料；历史计划不代表已经完成。</p><div id="memories"></div></section>
   <section><h3>当前范围的本人事实</h3><p class="muted">具体纠正可在回复下方填写。</p><div id="facts"></div></section>
   <section><h3>表达画像</h3><p class="muted">用于表达参考，不能代替事实依据。</p><div id="profile"></div></section>
   <section><h3>资料边界</h3><p id="boundary" class="muted">当前使用独立合成库；不读取微信原始导出、媒体或私有映射。</p></section></div></div>
 </aside>
+<aside id="study-library" class="settings study-library" hidden aria-label="我的学习"><div class="panel-heading"><div><span class="eyebrow">个人题库与方法</span><h2>我的学习</h2></div><button id="close-study-library" class="icon-button" aria-label="关闭我的学习">×</button></div><div class="panel-scroll"><p class="muted">这里保留你标记过或生成过解答的题。做题状态由你自己填写，查看解答不会改变标记。</p><label for="study-library-filter">按做题状态筛选</label><select id="study-library-filter"><option value="all">全部</option><option value="unattempted">未做过</option><option value="attempted">做过（含做对、做错）</option><option value="correct">做对</option><option value="incorrect">做错</option></select><p id="study-library-status" class="muted" role="status"></p><div id="study-methods"></div><div id="study-questions"></div></div></aside>
+<script src="/vendor/katex.min.js" defer></script>
 <script src="/question-text.js" defer></script>
 <script src="/app.js" defer></script>
 <script src="/question-scope.js" defer></script>
@@ -153,4 +156,6 @@
 <script src="/models.js" defer></script>
 <script src="/setup.js" defer></script>
 <script src="/wechat-sync.js" defer></script>
+<script src="/study.js" defer></script>
+<script src="/reference-upload.js" defer></script>
 </body></html>

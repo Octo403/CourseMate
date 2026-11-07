@@ -1,5 +1,7 @@
 # 本地 Qwen 模型
 
+> 当前默认入口为学习模式；本页保留可选个人资料实现说明。历史微信库、派生文件、模型及私有评测产物已经清理，文中的旧路径和测量不代表当前存在的数据或本轮验收结果。
+
 根据用户“下载一个模型放在本地”的选择，2026-10-04 下载并运行官方 [Qwen3-4B-GGUF](https://huggingface.co/Qwen/Qwen3-4B-GGUF) 的 Q4_K_M 版本，使用官方 [llama.cpp Windows Vulkan 程序](https://github.com/ggml-org/llama.cpp/releases/tag/b11384)。
 
 模型文件为 `data/runtime/local_model/Qwen3-4B-Q4_K_M.gguf`，实际大小 2,497,280,256 字节；推理程序位于同目录 `llama/`，版本 b11384。二者及日志已由 `data/runtime/` 规则排除，不进入版本控制。下载经本机代理访问官方仓库，模型推理不依赖下载代理。
@@ -19,7 +21,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop_local_model.ps1
 
 服务仅监听 `127.0.0.1:8765`，后台隐藏启动，启用本地 API 验证及 localhost CORS；不开放远程网络地址，不启用服务端工具、代理或 MCP。启动脚本识别已有本项目进程，停止脚本验证 PID 的实际程序路径，避免结束别的程序。
 
-启动脚本的 `-ContextSize` 默认 8,192，可在 2,048—32,768 内显式配置；调整已运行服务时先执行停止脚本，再以新值启动。2026-10-07 真实微信三步技能演示在 4,096 配置下遇到上下文不足，压缩重复提示并切换到 8,192 后实际运行通过；应用字符预算仍为 6,500。证据见 `WECHAT_UI_DEMO.md`（仅本机研究记录，不随源码发布）。
+启动脚本的 `-ContextSize` 默认 8,192，可在 2,048—32,768 内显式配置；调整已运行服务时先执行停止脚本，再以新值启动。2026-10-07 真实微信三步技能演示在 4,096 配置下遇到上下文不足，压缩重复提示并切换到 8,192 后实际运行通过；应用字符预算仍为 6,500。证据见 `已清理的历史私有评测记录`（仅本机研究记录，不随源码发布）。
 
 本地 `.env` 已配置：`LLM_BASE_URL=http://127.0.0.1:8765/v1`、`LLM_MODEL=qwen3-4b-local`、温度 0.3、最多 512 tokens。`LLM_API_KEY` 为仅用于该回环服务的本地配置，不是外部服务密钥。HTTP 适配器在回环地址禁用环境代理，个人提示不会被环境代理转发。
 
@@ -31,7 +33,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop_local_model.ps1
 
 五节点实际调用验证了闲聊、计算（结果 310）、Word 教程与知识库活动室查询（命中 demo.md，返回 20 人）。实测曾把 Word 教程误分给事件工具，补充调度提示后正确走知识路径。自省存在一例修正说明与最终答案不一致，后续 T9 继续评测，不能据几次调用宣称自省已可靠。
 
-私有证据：`data/private/t6/evaluation/generation_report.json` 和 `data/private/t6/local_model_verification.json`。未调用外部模型，没有发送私聊原文或个人画像至远程服务。本人已给出 26 份完整评分和 1 份仅文字批注，并选择结束本轮 T6.6；风格效果不理想，详见 `STYLE_EVALUATION.md`（仅本机研究记录，不随源码发布）。原生成报告中的 user_scores=0 是生成结束时的历史值，当前评分以 evaluation/summary.json 为准。
+私有证据：`data/private/t6/evaluation/generation_report.json` 和 `data/private/t6/local_model_verification.json`。未调用外部模型，没有发送私聊原文或个人画像至远程服务。本人已给出 26 份完整评分和 1 份仅文字批注，并选择结束本轮 T6.6；风格效果不理想，详见 `已清理的历史私有评测记录`（仅本机研究记录，不随源码发布）。原生成报告中的 user_scores=0 是生成结束时的历史值，当前评分以 evaluation/summary.json 为准。
 
 2026-10-05 T8 又用同一本地模型运行六轮合成方案对话，在第六轮前重建 Agent，仍正确回答名称与修改后的 10 人参数；当前文档和显式用户纠正也覆盖了历史助手猜测。末轮曾虚构技能名，失败被正确记录，完整调度校验留待 T9。实测记录为 `data/private/t8/verification/run-20261005-221940/`，恢复与上下文说明见 [CONTEXT.md](CONTEXT.md)。
 

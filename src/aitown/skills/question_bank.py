@@ -1,5 +1,5 @@
 from .base import Skill
-from ..question_bank.models import GetArgs, QuestionResult, SearchArgs, StatusArgs, StatusResult
+from ..question_bank.models import GetArgs, QuestionResult, SearchArgs, SolveArgs, StatusArgs, StatusResult
 
 
 class QuestionSearch(Skill):
@@ -39,3 +39,17 @@ class CourseStatus(Skill):
 
     def run(self, arguments):
         return self.bank.status(arguments.course)
+
+
+class QuestionSolve(Skill):
+    name = 'question_solve'
+    description = '解答本会话选中的一道原题，返回 ChatGPT 书面参考解答及方法归纳；不改变用户的做题标记。'
+    arguments = SolveArgs
+    result_type = QuestionResult
+
+    def __init__(self, bank):
+        self.bank = bank
+
+    def run(self, arguments):
+        from ..question_bank.solve import solve_question
+        return solve_question(self.bank, arguments.question_id)

@@ -1,4 +1,5 @@
 .venv*/
+~$*
 # Local credentials and machine-specific configuration
 .env
 .env.*

@@ -10,7 +10,12 @@ from .demo import settings_for_ui
 from .service import UIError,UIService
 
 
-def make_server(service,port=8501,*,desktop=None):
+def make_server(service,port=8501,*,desktop=None,visitors=None,public_origin=''):
+    default_service=service
+    if public_origin:
+        external=urlparse(public_origin)
+        if external.scheme!='https' or not external.netloc or external.path or external.query or external.fragment or external.username or external.password:
+            raise ValueError('公网入口须为不含路径的 HTTPS Origin。')
     class Handler(BaseHTTPRequestHandler):
         def log_message(self,*args):pass  # Questions and source text never enter access logs.
         def send(self,status,data,content_type='application/json; charset=utf-8',filename=None,attachment=False):
@@ -18,16 +23,23 @@ def make_server(service,port=8501,*,desktop=None):
             self.send_response(status)
             self.send_header('Content-Type',content_type);self.send_header('Content-Length',str(len(body)))
             self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff')
+            if getattr(self,'visitor_cookie',''):self.send_header('Set-Cookie',self.visitor_cookie)
             if filename:self.send_header('Content-Disposition',('attachment' if attachment else 'inline')+"; filename*=UTF-8''"+quote(filename,safe=''))
             self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
             self.end_headers();self.wfile.write(body)
         def dispatch(self):
+            service=default_service
             port=self.server.server_port
             hosts={f'127.0.0.1:{port}',f'localhost:{port}'}
+            if public_origin:hosts.add(external.netloc)
             if self.headers.get('Host') not in hosts:raise UIError('只接受本机访问。',403)
             origin=self.headers.get('Origin')
-            if origin and origin not in {f'http://{host}' for host in hosts}:raise UIError('不接受其他站点发起的操作。',403)
+            origins={f'http://127.0.0.1:{port}',f'http://localhost:{port}'}
+            if public_origin:origins.add(public_origin)
+            if origin and origin not in origins:raise UIError('不接受其他站点发起的操作。',403)
             parsed=urlparse(self.path);query=parse_qs(parsed.query)
+            if visitors is not None and parsed.path.startswith('/api/') and parsed.path!='/api/health':
+                service,self.visitor_token,self.visitor_cookie=visitors.acquire(self.headers.get('Cookie',''))
             if self.command=='GET':
                 if parsed.path=='/api/desktop' and desktop is not None:
                     self.send(200,desktop);return
@@ -35,11 +47,14 @@ def make_server(service,port=8501,*,desktop=None):
                 assets['/question-text.js']=('question_text.js','text/javascript; charset=utf-8')
                 assets['/setup.js']=('setup.js','text/javascript; charset=utf-8')
                 assets['/wechat-sync.js']=('wechat_sync.js','text/javascript; charset=utf-8')
+                assets['/study.js']=('study.js','text/javascript; charset=utf-8')
+                assets['/reference-upload.js']=('reference_upload.js','text/javascript; charset=utf-8')
+                assets['/vendor/katex.min.js']=('vendor/katex.min.js','text/javascript; charset=utf-8')
                 if parsed.path in assets:
                     name,mime=assets[parsed.path];self.send(200,(Path(__file__).parent/'static'/name).read_bytes(),mime);return
                 if parsed.path=='/api/job':result=service.job(query.get('id',[''])[0])
                 elif parsed.path=='/api/question-image':
-                    body,mime=service.call('_question_image',int(query.get('id',['0'])[0]),int(query.get('index',['0'])[0]))
+                    body,mime=service.call('_question_image',int(query.get('id',['0'])[0]),int(query.get('index',['0'])[0]),query.get('parts',[''])[0])
                     self.send(200,body,mime);return
                 elif parsed.path=='/api/question-page':
                     body,mime=service.call('_question_page',int(query.get('id',['0'])[0]),int(query.get('page',['0'])[0]))
@@ -51,6 +66,13 @@ def make_server(service,port=8501,*,desktop=None):
                     body,mime,name=service.call('_course_source',query.get('course',[''])[0],int(query.get('source',['0'])[0]))
                     self.send(200,body,mime,filename=name,attachment=mime!='application/pdf');return
                 elif parsed.path=='/api/bootstrap':result=service.call('_bootstrap')
+                elif parsed.path=='/api/reference-file':
+                    body,mime,name=service.call('_reference_file',query.get('id',[''])[0],query.get('session',[''])[0],int(query.get('index',['0'])[0]))
+                    self.send(200,body,mime,filename=name);return
+                elif parsed.path=='/api/study':result=service.call('_study_library',query.get('course',[''])[0],query.get('state',['all'])[0])
+                elif parsed.path=='/api/study-image':
+                    body,mime=service.call('_study_image',int(query.get('item',['0'])[0]),int(query.get('index',['0'])[0]))
+                    self.send(200,body,mime);return
                 elif parsed.path=='/api/wechat-sync':result=service.wechat_sync.status()
                 elif parsed.path=='/api/wechat-preview':result=service.wechat_sync.preview(query.get('id',['0'])[0])
                 elif parsed.path=='/api/wechat-library':result=service.wechat_sync.library(query.get('id',['0'])[0],query.get('offset',['0'])[0])
@@ -63,8 +85,10 @@ def make_server(service,port=8501,*,desktop=None):
                 else:raise UIError('页面或接口不存在。',404)
                 self.send(200,result);return
             if self.command!='POST':raise UIError('不支持此请求方法。',405)
-            if parsed.path=='/api/course-upload':
+            if parsed.path in ('/api/course-upload','/api/question-upload'):
                 from ..question_bank.supplements import MAX_UPLOAD_BYTES
+                from ..question_bank.attachments import MAX_REFERENCE_BYTES
+                reference=parsed.path=='/api/question-upload'
                 content_type=self.headers.get('Content-Type','')
                 if content_type.split(';')[0]!='multipart/form-data':raise UIError('上传须使用文件表单。',415)
                 message=BytesParser(policy=default).parsebytes(('Content-Type: '+content_type+'\r\nMIME-Version: 1.0\r\n\r\n').encode('ascii')+self.request_body)
@@ -76,10 +100,13 @@ def make_server(service,port=8501,*,desktop=None):
                     body=part.get_payload(decode=True)
                     if name=='files' and part.get_filename() is not None:
                         files.append({'name':part.get_filename(),'content':body})
-                    elif name in ('course','session','replace') and name not in fields and len(body or b'')<=4096:
+                    elif name in (('session','query') if reference else ('course','session','replace')) and name not in fields and len(body or b'')<=4096:
                         fields[name]=(body or b'').decode('utf-8')
                     else:raise UIError('文件表单字段无效或重复。')
-                    if len(files)>20:raise UIError('每次最多上传 20 个文件。')
+                    if len(files)>(3 if reference else 20):raise UIError('每次最多上传 3 个参考题附件。' if reference else '每次最多上传 20 个文件。')
+                if reference:
+                    if sum(len(item['content'] or b'') for item in files)>MAX_REFERENCE_BYTES:raise UIError('参考题附件合计不能超过 20 MiB。',413)
+                    self.send(200,service.start_job('_search_attachment',fields,files));return
                 if fields.get('replace','false') not in ('true','false'):raise UIError('替换资料选项无效。')
                 fields['replace']=fields.get('replace')=='true'
                 if sum(len(item['content'] or b'') for item in files)>MAX_UPLOAD_BYTES:raise UIError('本批文件合计不能超过 100 MiB。',413)
@@ -89,6 +116,7 @@ def make_server(service,port=8501,*,desktop=None):
             except (UnicodeDecodeError,json.JSONDecodeError):raise UIError('JSON 格式不正确。')
             if not isinstance(payload,dict):raise UIError('请求须为 JSON 对象。')
             routes={'/api/chat':('_chat',payload),'/api/resume':('_resume',payload.get('session','')),
+                '/api/question-solve':('_solve_question',payload),
                 '/api/correct':('_correct',payload),'/api/import':('_import',payload),
                 '/api/wechat-review':('_review_wechat',payload),
                 '/api/delete-document':('_delete_document',payload.get('id',0)),'/api/refresh':('_refresh',),
@@ -113,6 +141,8 @@ def make_server(service,port=8501,*,desktop=None):
             elif parsed.path=='/api/setup-complete':result=service.call('_setup_complete')
             elif parsed.path=='/api/session':result=service.call('_create_session',payload)
             elif parsed.path=='/api/question-scope':result=service.call('_question_scope',payload)
+            elif parsed.path=='/api/study-mark':result=service.call('_study_mark',payload)
+            elif parsed.path=='/api/study-filter':result=service.call('_study_filter',payload)
             elif parsed.path=='/api/feedback':result=service.call('_feedback',payload)
             elif parsed.path=='/api/skill':result=service.call('_skill',payload)
             elif parsed.path=='/api/prepare-course':result=service.call('_prepare_course',payload)
@@ -121,13 +151,15 @@ def make_server(service,port=8501,*,desktop=None):
             else:raise UIError('接口不存在。',404)
             self.send(200,result)
         def handle_request(self):
+            self.visitor_token='';self.visitor_cookie=''
             try:
                 self.request_body=b''
                 if self.command=='POST':
                     try:length=int(self.headers.get('Content-Length','0'))
                     except ValueError:raise UIError('请求长度不正确。')
                     from ..question_bank.supplements import MAX_UPLOAD_BYTES
-                    maximum=MAX_UPLOAD_BYTES+1024*1024 if urlparse(self.path).path=='/api/course-upload' else 2000000
+                    from ..question_bank.attachments import MAX_REFERENCE_BYTES
+                    maximum=MAX_UPLOAD_BYTES+1024*1024 if urlparse(self.path).path=='/api/course-upload' else MAX_REFERENCE_BYTES+1024*1024 if urlparse(self.path).path=='/api/question-upload' else 2000000
                     if not 0<length<=maximum:raise UIError('请求为空或超过大小限制。',413)
                     # Consume bounded bodies before rejecting an origin/type.
                     # Closing with unread bytes can reset the connection on Windows,
@@ -138,6 +170,8 @@ def make_server(service,port=8501,*,desktop=None):
             except UIError as exc:self.send(exc.status,{'error':str(exc)})
             except (ValueError,KeyError,TypeError):self.send(400,{'error':'输入格式不正确，请检查字段。'})
             except Exception as exc:self.send(500,{'error':f'本地操作失败（{type(exc).__name__}），请检查配置。'})
+            finally:
+                if self.visitor_token:visitors.release(self.visitor_token)
         do_GET=handle_request
         do_POST=handle_request
         do_OPTIONS=handle_request

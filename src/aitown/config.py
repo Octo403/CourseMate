@@ -13,6 +13,9 @@ class Settings(BaseModel):
     model_config = {"validate_assignment": True}
     agent: AgentProfile = Field(default_factory=AgentProfile)
     mode: Literal["demo", "live"] = "demo"
+    llm_provider: Literal['compatible', 'codex_chatgpt'] = 'compatible'
+    study_mode: bool = False
+    online_rerank: bool = False
     base_url: str = "https://api.openai.com/v1"
     api_key: str = Field(default="", repr=False, exclude=True)
     model: str = ""
@@ -60,7 +63,7 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def validate_live(self):
-        if self.mode == "live" and (not self.api_key.strip() or not self.model.strip()):
+        if self.mode == "live" and self.llm_provider == 'compatible' and (not self.api_key.strip() or not self.model.strip()):
             raise ValueError("live 模式需要配置 LLM_API_KEY 和 LLM_MODEL")
         if not self.base_url.startswith(("http://", "https://")):
             raise ValueError("LLM_BASE_URL 必须为 http:// 或 https:// 地址")
@@ -86,6 +89,8 @@ class Settings(BaseModel):
             agent=AgentProfile(name=os.getenv("AGENT_NAME", "AnotherMe"),
                                language=os.getenv("AGENT_LANGUAGE", "中文")),
             mode=mode or os.getenv("AITOWN_MODE", "demo"),
+            llm_provider=os.getenv('LLM_PROVIDER', 'compatible'),
+            online_rerank=os.getenv('ONLINE_RERANK', 'false').lower() == 'true',
             base_url=os.getenv("LLM_BASE_URL", "https://api.openai.com/v1"),
             api_key=os.getenv("LLM_API_KEY", ""),
             model=os.getenv("LLM_MODEL", ""),

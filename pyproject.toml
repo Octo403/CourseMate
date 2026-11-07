@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "aitown"
 version = "0.1.0"
-description = "AnotherMe single Agent LangGraph experiment"
+description = "CourseMate course learning assistant"
 requires-python = ">=3.11"
 dependencies = [
   "langgraph>=1.0,<2",

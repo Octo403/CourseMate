@@ -353,6 +353,18 @@ def parse_docx(path, source, output):
 
 def parse_file(path: Path, source, output, config=None):
     suffix = path.suffix.lower()
+    if source['category_hint']=='material' and suffix in ('.pdf','.md','.txt'):
+        notes=['课程参考资料（笔记、含解答习题或报告）；保留原件与正文，不将编号推导步骤作为独立试题']
+        if suffix=='.pdf':
+            import pymupdf as fitz
+            with fitz.open(path) as document:
+                pages=[Page(ordinal=i,text=page.get_text('text',sort=True)) for i,page in enumerate(document,1)]
+            if any(len(page.text.strip())<30 for page in pages):
+                notes.append('部分页面为扫描或图片笔记，正文未完整识别，请打开原件核对')
+        else:
+            pages=[Page(ordinal=i,text=line,location_kind='line') for i,line in enumerate(path.read_text(encoding='utf-8-sig').splitlines(),1)]
+        return ParsedSource(pages=pages,questions=[],category='material',notes=notes,
+                            status='partial' if len(notes)>1 else 'ready')
     if suffix == '.pdf':
         if config and config.extractor == 'mineru_api':
             from .mineru_api import parse_mineru_api_pdf,validate_source

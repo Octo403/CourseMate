@@ -28,7 +28,12 @@ def read(agent, state, query):
     personal = filters.purpose == 'personal'
     result = None
     if agent.retriever:
-        result = agent.retriever.search(query, filters)
+        events = getattr(agent.model, 'events', [])
+        before = len(events)
+        try:
+            result = agent.retriever.search(query, filters)
+        finally:
+            state['model_calls'].extend(event.model_copy(update={'phase': 'rerank'}) for event in events[before:])
         state['warnings'].extend(result.warnings)
         try:
             agent.memory.put_transient(state['session'], state['agent'].id, 'retrieval', state['request_id'], result.model_dump())
@@ -37,7 +42,7 @@ def read(agent, state, query):
         if result.status == 'retrieval_error':
             from ..errors import AgentError
             add_error(state, AgentError('retrieval', 'rag', 'search_failed', '检索故障，无法确认本轮资料。'), 'rag')
-        if personal or result.status == 'ok':
+        if personal or result.status == 'ok' or agent.settings.online_rerank:
             return {'sources': citations(result), 'retrieval_status': result.status,
                     'personal_query': personal, 'retrieval_details': {**result.model_dump(), 'filters': filters.model_dump()}}
     if agent.retrieval_error:
@@ -69,6 +74,7 @@ def run(agent, state):
         status='failed' if result['retrieval_status'] == 'retrieval_error' else 'ok',
         reason=('自省补检：' if supplemental else '计划检索：')+result['retrieval_status']))
     return {**result, 'warnings': state['warnings'], 'errors': state['errors'],
+            'model_calls': state['model_calls'],
             'execution': state['execution'], 'trace': [*state['trace'], 'rag'],
             'retrieval_attempts': attempt, 'needs_supplement': False,
             'plan_cursor': state.get('plan_cursor', 0)+(0 if supplemental else 1)}

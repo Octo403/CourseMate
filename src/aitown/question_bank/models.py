@@ -112,6 +112,12 @@ class SearchArgs(BaseModel):
     limit: int = Field(default=3, ge=1, le=10)
     exclude_ids: list[int] = Field(default_factory=list, max_length=100)
     reference_ids: list[int] = Field(default_factory=list, max_length=3, description='第二轮相似题查询：本会话已返回并选定的题目 ID')
+    study_state: Literal['all', 'unattempted', 'attempted', 'correct', 'incorrect'] = 'all'
+
+
+class SolveArgs(BaseModel):
+    model_config = {'extra': 'forbid'}
+    question_id: int = Field(gt=0)
 
 
 class GetArgs(BaseModel):

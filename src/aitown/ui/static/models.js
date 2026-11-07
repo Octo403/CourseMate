@@ -27,6 +27,11 @@ async function loadModelCatalog(mode){
 }
 function renderQuestionModelBadge(){
  const data=state.bootstrap;if(!data)return;
+ if(data.data==='study'){
+  $('mode-badge').textContent=data.mode==='live'?'在线 Agent':'本地筛选';
+  $('course-search-mode').textContent=data.mode==='live'?'所选在线模型用于对话、意图理解、知识检索重排和自省；课程题库仍显示原题与出处。':data.hosted?'当前仅本地筛选。在设置中填写你自己的模型 API 后，可生成回答与参考解答。':'当前仅本地筛选。启用 ChatGPT 登录或模型 API 后可生成回答与参考解答。';
+  return;
+ }
  const label=data.question_model==='api'?`题库 API · ${data.question_model_name}`:data.question_model==='codex_chatgpt'?'题库 · ChatGPT 第二轮':'题库 · 本地筛选';
  $('mode-badge').textContent=label;
  $('course-search-mode').textContent=data.question_model==='codex_chatgpt'?'找题流程：本地召回 → ChatGPT 根据本次提问筛选，也支持参考题追问。':data.question_model==='api'?'当前使用 API 筛题；可在模型设置切换到 ChatGPT 登录。':'当前仅本地筛选；要启用第二轮 ChatGPT，请在“筛题模型设置”中选择 ChatGPT 登录并保存。';
@@ -58,6 +63,17 @@ function renderLocalModelSettings(data){
 }
 function renderModelSettings(data){
  state.modelSettings=data;
+ const hosted=Boolean(data.hosted);
+ const codexOption=$('question-model-mode').querySelector('option[value="codex_chatgpt"]');
+ if(codexOption){codexOption.disabled=hosted;codexOption.hidden=hosted;}
+ const localOption=$('model-provider').querySelector('option[value="local"]');
+ if(localOption){localOption.disabled=hosted;localOption.hidden=hosted;}
+ $('remember-model-keys').closest('label').hidden=hosted;
+ $('secret-storage-note').textContent=hosted?'每个浏览器使用独立空间。Key 仅保留在服务内存，服务重启或闲置 30 分钟后需重新填写；清除浏览器 Cookie 会失去当前空间入口。服务器管理员仍可访问运行内存和服务器文件。':'勾选后点击保存，重启可继续使用。不勾选时仅本次有效。输入框始终不回显密钥，请看上方保存状态。';
+ let hostNote=$('model-host-note');
+ if(!hostNote){hostNote=el('p',undefined,'muted');hostNote.id='model-host-note';$('model-base-url').after(hostNote);}
+ hostNote.hidden=!hosted;
+ hostNote.textContent=hosted?'可用 API 服务地址：'+data.allowed_api_hosts.join('、')+'。其他服务请联系管理员添加。':'';
  $('question-model-mode').value=data.search_mode;
  $('model-provider').value=data.api.provider;
  $('model-base-url').value=data.api.base_url;modelOptions('api',data.api.model);
@@ -81,7 +97,7 @@ function renderModelSettings(data){
 }
 async function refreshModelSettings(){
  renderModelSettings(await api('/api/model-settings'));
- renderLocalModelSettings(await api('/api/local-model-settings'));
+ if(state.bootstrap?.data!=='study')renderLocalModelSettings(await api('/api/local-model-settings'));
  const mode=$('question-model-mode').value;
  if(mode==='codex_chatgpt'&&!modelCatalogs.codex_chatgpt)await loadModelCatalog(mode);
  else if(mode==='api'&&!modelCatalogs.api&&state.modelSettings.api.has_key)await loadModelCatalog(mode);

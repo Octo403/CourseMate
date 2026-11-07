@@ -44,6 +44,7 @@ class ObservedAgent(AnotherMeAgent):
     def skill(self,state):
         names=[call.name for call in state['decision'].calls]
         self.progress('本地召回与 ChatGPT 筛题' if 'question_search' in names and self.question_bank.config.similar_provider=='codex_chatgpt'
+            else 'ChatGPT 正在生成书面解答与方法归纳' if 'question_solve' in names
             else '整理资料' if 'dialogue_summary' in names else '执行技能')
         return super().skill(state)
     def reflect(self,state):
@@ -66,9 +67,14 @@ class UIService:
             CREATE TABLE IF NOT EXISTS ui_sessions(agent_id TEXT NOT NULL,session_id TEXT NOT NULL,title TEXT NOT NULL,scope TEXT NOT NULL,created REAL NOT NULL,PRIMARY KEY(agent_id,session_id));
             CREATE TABLE IF NOT EXISTS ui_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS ui_skills(name TEXT PRIMARY KEY,enabled INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS ui_reference_uploads(
+                id TEXT PRIMARY KEY,agent_id TEXT NOT NULL,session_id TEXT NOT NULL,
+                request_id TEXT NOT NULL,question TEXT NOT NULL,files TEXT NOT NULL,reference TEXT NOT NULL);
         ''')
         if 'question_course' not in {row[1] for row in self.meta.execute('PRAGMA table_info(ui_sessions)')}:
             with self.meta:self.meta.execute("ALTER TABLE ui_sessions ADD COLUMN question_course TEXT NOT NULL DEFAULT ''")
+        if 'study_filter' not in {row[1] for row in self.meta.execute('PRAGMA table_info(ui_sessions)')}:
+            with self.meta:self.meta.execute("ALTER TABLE ui_sessions ADD COLUMN study_filter TEXT NOT NULL DEFAULT 'all'")
         self.model_preferences=ModelPreferences(search_mode=self.settings.question_similar_provider,
             api=self.settings.question_api,codex_model=self.settings.question_similar_model,
             codex_images=self.settings.question_similar_images,extractor=self.settings.question_extractor,
@@ -82,6 +88,8 @@ class UIService:
             except (ValueError,ValidationError):
                 self.model_preferences=ModelPreferences()
                 self.model_settings_warning='加密模型配置无法读取，请在设置中重新填写 Key。'
+        if self.data=='study':
+            if self.model_preferences.extractor=='mineru':self.model_preferences.extractor='basic'
         self._apply_model_preferences()
         self.local_model_warning=''
         self.local_model_preferences=LocalModelPreferences(remember_key=os.name=='nt')
@@ -90,7 +98,7 @@ class UIService:
                 model=self.settings.model,api_key=self.settings.api_key,remember_key=os.name=='nt',
                 response_format=self.settings.llm_response_format)
         saved=self.meta.execute("SELECT value FROM ui_settings WHERE key='local_model_preferences'").fetchone()
-        if saved:
+        if saved and self.data!='study':
             try:
                 self.local_model_preferences=LocalModelPreferences.restore(saved[0])
                 self.settings=self._local_settings(self.local_model_preferences)
@@ -98,7 +106,7 @@ class UIService:
                 self.local_model_warning='本机模型配置无法读取，请重新配置；密钥只能由原 Windows 账户解密。'
         if self.settings.mode=='live' and not self.live_available():raise UIError('界面的真实模型模式仅支持已配置的本机服务。')
         self.agent=ObservedAgent(self.settings,self._progress)
-        if not hasattr(self,'wechat_sync'):
+        if self.data!='study' and not hasattr(self,'wechat_sync'):
             from .wechat_sync import WechatSync
             database=(self.agent.retrieval_repository or self.agent.runtime_repository).path
             self.wechat_sync=WechatSync(database,self.metadata_path.parent/'wechat-sync-temp')
@@ -106,6 +114,9 @@ class UIService:
             if row['name'] in self.agent.skills._skills:self.agent.skills.enable(row['name'],bool(row['enabled']))
 
     def live_available(self):
+        if self.data=='study':
+            return self.model_preferences.search_mode=='codex_chatgpt' or (
+                self.model_preferences.search_mode=='api' and self.model_preferences.api.ready())
         return bool(self.settings.model and self.settings.api_key and urlparse(self.settings.base_url).hostname in ('127.0.0.1','localhost','::1'))
 
     def _local_settings(self,preferences):
@@ -158,7 +169,9 @@ class UIService:
 
     def _progress(self,phase):
         with self.lock:
-            if self.active:self.jobs[self.active]['phase']=phase
+            if self.active:
+                job=self.jobs[self.active];job['phase']=phase
+                if not job['steps'] or job['steps'][-1]!=phase:job['steps'].append(phase)
 
     def call(self,method,*args):
         with self.lock:
@@ -169,7 +182,7 @@ class UIService:
         with self.lock:
             if self.active:raise UIError('AnotherMe 正在处理上一项操作，请稍后再试。',409)
             key=str(uuid.uuid4());self.active=key
-            self.jobs[key]={'id':key,'status':'running','phase':'准备处理','started':time.time()}
+            self.jobs[key]={'id':key,'status':'running','phase':'准备处理','steps':[],'started':time.time()}
         self.pool.submit(self._run,key,method,args)
         return {'job_id':key}
 
@@ -201,6 +214,7 @@ class UIService:
         return dict(row)
 
     def _scopes(self):
+        if self.data=='study':return []
         repo=self.agent.retrieval_repository or self.agent.runtime_repository
         scopes={row[0] for row in repo.conn.execute('SELECT DISTINCT scope FROM memories')}
         scopes|={row[0] for row in repo.conn.execute('SELECT DISTINCT scope FROM source_records')}
@@ -216,12 +230,12 @@ class UIService:
             if row[0]=='fixture' and self.data=='synthetic':continue
             with self.meta:self.meta.execute('INSERT OR IGNORE INTO ui_sessions(agent_id,session_id,title,scope,created) VALUES(?,?,?,?,?)',
                 (self.settings.agent.id,row[0],row[0],'',time.time()))
-        sessions=[dict(row) for row in self.meta.execute('SELECT session_id AS id,title,scope,created,question_course FROM ui_sessions WHERE agent_id=? ORDER BY created DESC',(self.settings.agent.id,))]
-        wechat_sources=self.wechat_sync.status()['sources']
+        sessions=[dict(row) for row in self.meta.execute('SELECT session_id AS id,title,scope,created,question_course,study_filter FROM ui_sessions WHERE agent_id=? ORDER BY created DESC',(self.settings.agent.id,))]
+        wechat_sources=self.wechat_sync.status()['sources'] if hasattr(self,'wechat_sync') else []
         return {'name':self.settings.agent.name,'mode':self.settings.mode,'data':self.data,
                 'has_wechat_sync':bool(wechat_sources),
                 'scope_labels':{s['scope']:s['label'] for s in wechat_sources},
-                'data_label':'本地资料 · 微信同步' if wechat_sources else {'synthetic':'合成演示资料','wechat':'微信资料副本','configured':'已配置的本地资料'}.get(self.data,'本地资料'),
+                'data_label':'课程题库 · 个人学习记录' if self.data=='study' else '本地资料 · 微信同步' if wechat_sources else {'synthetic':'合成演示资料','wechat':'微信资料副本','configured':'已配置的本地资料'}.get(self.data,'本地资料'),
                 'live_available':self.live_available(),
                 'model':self.settings.model if self.live_available() else '', 'sessions':sessions,'scopes':self._scopes(),
                 'default_scope':self.settings.style_scope,'skills':self.agent.skills.catalog(include_disabled=True),
@@ -234,14 +248,24 @@ class UIService:
 
     def _apply_model_preferences(self):
         preferences=self.model_preferences
-        self.settings=self.settings.model_copy(update={
+        updates={
             'question_similar_provider':preferences.search_mode,'question_api':preferences.api,
             'question_similar_model':preferences.codex_model,'question_similar_images':preferences.codex_images,
             'question_codex_path':preferences.codex_path,
             'question_extractor':preferences.extractor,'mineru_api_key':preferences.mineru_token,
-            'mineru_api_model':preferences.mineru_model})
+            'mineru_api_model':preferences.mineru_model}
+        if self.data=='study':
+            updates.update(mode='demo' if preferences.search_mode=='none' else 'live',
+                llm_provider='codex_chatgpt' if preferences.search_mode=='codex_chatgpt' else 'compatible',
+                online_rerank=True,
+                model=preferences.api.model if preferences.search_mode=='api' else preferences.codex_model,
+                base_url=preferences.api.base_url,api_key=preferences.api.api_key or 'local',
+                temperature=preferences.api.temperature,max_tokens=preferences.api.max_tokens,
+                llm_response_format=preferences.api.response_format)
+        self.settings=self.settings.model_copy(update=updates)
         if hasattr(self,'agent'):
-            self.agent.settings=self.settings
+            if self.data=='study':self.agent.configure_model(self.settings)
+            else:self.agent.settings=self.settings
             self.agent.question_bank.config=self.agent.question_bank.config.model_copy(update={
                 'similar_provider':preferences.search_mode,'api':preferences.api,
                 'similar_model':preferences.codex_model,'similar_images':preferences.codex_images,
@@ -289,6 +313,8 @@ class UIService:
 
     def _save_model_settings(self,payload):
         candidate=self._resolve_model_settings(payload)
+        if self.data=='study' and candidate.extractor=='mineru':
+            raise UIError('学习模式无需本地模型，请选择基础解析或在线解析。')
         if candidate.clear_api_key and not candidate.api.ready() and candidate.search_mode=='api':
             candidate.search_mode='none'
         if candidate.clear_mineru_token and candidate.extractor=='mineru_api':
@@ -348,15 +374,130 @@ class UIService:
             (course,self.settings.agent.id,entry['session_id']))
         return self._session(entry['session_id'])
 
+    def _study_filter(self,payload):
+        from ..question_bank.study import STATES
+        entry=self._session(payload.get('session',''))
+        selected=payload.get('state','all')
+        if selected not in ('all',*STATES):raise UIError('学习状态不正确。')
+        with self.meta:self.meta.execute('UPDATE ui_sessions SET study_filter=? WHERE agent_id=? AND session_id=?',
+            (selected,self.settings.agent.id,entry['session_id']))
+        return self._session(entry['session_id'])
+
+    def _study_question(self,payload):
+        from ..question_bank.models import GetArgs
+        from ..question_bank.study import StudyStore
+        entry=self._session(payload.get('session',''))
+        item=payload.get('item_id')
+        if item is not None:
+            if type(item) is not int:raise UIError('个人题目编号不正确。')
+            with StudyStore(self.agent.question_bank.config.root/'study.sqlite3',self.settings.agent.id) as store:
+                return store.snapshot(item)
+        qid=payload.get('question_id')
+        if type(qid) is not int or qid<1:raise UIError('题目编号不正确。')
+        result=self.agent.question_bank.get(GetArgs(question_ids=[qid]))
+        if not result.results:raise UIError('题目已更新，请重新找题。')
+        question=result.results[0]
+        if entry['question_course'] and question['course_id']!=entry['question_course']:
+            raise UIError('请切换到这道题所属的课程。')
+        return question
+
+    def _study_mark(self,payload):
+        from ..question_bank.study import StudyStore
+        question=self._study_question(payload)
+        with StudyStore(self.agent.question_bank.config.root/'study.sqlite3',self.settings.agent.id) as store:
+            return store.mark(question,payload.get('state'))
+
+    def _study_library(self,course='',state='all'):
+        from ..question_bank.study import StudyStore
+        with StudyStore(self.agent.question_bank.config.root/'study.sqlite3',self.settings.agent.id) as store:
+            questions=store.library(course,state)
+        return {'questions':questions}
+
+    def _study_image(self,item,index):
+        from ..question_bank.study import StudyStore
+        root=self.agent.question_bank.config.root.resolve()
+        with StudyStore(root/'study.sqlite3',self.settings.agent.id) as store:
+            question=store.snapshot(item)
+        if index<0 or index>=len(question['images']):raise UIError('个人题图不存在。',404)
+        path=Path(question['images'][index]).resolve()
+        if not path.is_relative_to(root/'study-assets') or not path.is_file():raise UIError('个人题图不存在。',404)
+        import mimetypes
+        mime=mimetypes.guess_type(path.name)[0]
+        if mime not in ('image/png','image/jpeg','image/webp'):raise UIError('不支持此题图。')
+        return path.read_bytes(),mime
+
+    def _solve_question(self,payload):
+        from ..question_bank.solve import solve_question
+        question=self._study_question(payload)
+        if 'item_id' in payload:raise UIError('请在课程题库中选择当前原题后求解。')
+        regenerate=payload.get('regenerate',False)
+        if type(regenerate) is not bool:raise UIError('重新求解选项不正确。')
+        self._progress('ChatGPT 正在生成书面解答与方法归纳')
+        result=solve_question(self.agent.question_bank,question['id'],regenerate=regenerate)
+        return {'question_id':question['id'],'status':result.status}
+
+    def _search_attachment(self,payload,files):
+        from ..question_bank.attachments import prepare_reference,recognize_reference
+        entry=self._session(payload.get('session',''))
+        course=entry['question_course']
+        if not course:raise UIError('请先通过“@ 题库”选择要找相似题的课程。')
+        bank=self.agent.question_bank
+        if not bank.status(course).coverage.get('questions'):
+            raise UIError('该课程尚未整理出题目，请先在课程资料中收集或上传资料。')
+        query=str(payload.get('query','')).strip() or '找三道与上传参考题相似的题'
+        if len(query)>1000:raise UIError('找题要求请控制在 1000 字以内。')
+        upload_id=str(uuid.uuid4())
+        self._progress('读取参考题附件')
+        prepared=prepare_reference(bank.config.root/'processed/query-uploads'/upload_id,files)
+        self._progress('识别参考题的题设与知识点')
+        reference,call=recognize_reference(bank.config,prepared,query)
+        if reference.status!='complete':
+            raise UIError('请补充参考题：'+'；'.join(reference.missing))
+        question={'id':-1,'course_id':course,'text':reference.text,'topics':reference.topics,
+                  'question_type':reference.question_type,'images':prepared['images'],
+                  'image_previews':[{'index':i,'page':i+1,'kind':'page'} for i in range(len(prepared['images']))]}
+        # The same main graph and search skill compare this turn's upload. They
+        # never store the upload as a course problem or reuse it in later turns.
+        with bank.reference_upload(question):
+            result=self._chat({'session':entry['session_id'],
+                'question':f'找与上传参考题相似的题。用户要求：{query}；参考题检索要点：{reference.search_query}'})
+        with self.meta:
+            self.meta.execute('INSERT INTO ui_reference_uploads VALUES(?,?,?,?,?,?,?)',
+                (upload_id,self.settings.agent.id,entry['session_id'],result['reply']['request_id'],query,
+                 json.dumps(prepared['files'],ensure_ascii=False),reference.model_dump_json()))
+        result['reference_call']=call
+        return result
+
+    def _reference_file(self,upload_id,session,index):
+        self._session(session)
+        row=self.meta.execute('SELECT files FROM ui_reference_uploads WHERE id=? AND session_id=? AND agent_id=?',
+            (upload_id,session,self.settings.agent.id)).fetchone()
+        if not row:raise UIError('参考题附件不存在。',404)
+        files=json.loads(row['files'])
+        if index<0 or index>=len(files):raise UIError('参考题附件不存在。',404)
+        file=files[index];path=Path(file['path']).resolve()
+        allowed=(self.agent.question_bank.config.root/'processed/query-uploads'/upload_id).resolve()
+        if not path.is_relative_to(allowed) or not path.is_file():raise UIError('参考题附件已不存在。',404)
+        import mimetypes
+        return path.read_bytes(),mimetypes.guess_type(path.name)[0] or 'application/octet-stream',file['name']
+
     def _history(self,session):
         entry=self._session(session)
         rows=self.agent.memory.rows(session,self.settings.agent.id,recent=False)
         turns=[]
+        uploads={row['request_id']:dict(row) for row in self.meta.execute(
+            'SELECT * FROM ui_reference_uploads WHERE session_id=? AND agent_id=?',(session,self.settings.agent.id))}
         for row in rows[-100:]:
             run=self.agent.memory.conn.execute('SELECT reply_json,scope FROM runtime_runs WHERE id=?',(row['request_id'],)).fetchone()
             reply=self._present(Reply.model_validate_json(run['reply_json']),run['scope']) if run and run['reply_json'] else None
             turns.append({'id':row['id'],'question':row['question'],'answer':reply['answer'] if reply else row['answer'],
                           'created':row['created'],'reply':reply,'feedback':[dict(r) for r in self.agent.memory.conn.execute('SELECT kind,correction FROM feedback WHERE turn_id=? ORDER BY id',(row['id'],))]})
+            upload=uploads.get(row['request_id'])
+            if upload:
+                turns[-1].update(question=upload['question'],reference=json.loads(upload['reference']),
+                    attachments=[{'name':file['name'],'upload_id':upload['id'],'index':i,
+                                  'image':Path(file['path']).suffix.lower() in ('.png','.jpg','.jpeg','.webp')}
+                                 for i,file in enumerate(json.loads(upload['files']))])
         pending=self.agent.memory.pending(session,self.settings.agent.id)
         return {'session':entry,'turns':turns,'pending':bool(pending),'pending_question':pending['question'] if pending else None}
 
@@ -391,7 +532,7 @@ class UIService:
         questions=[]
         question_texts=[]
         for skill in skills:
-            if skill['ok'] and skill['name'] in ('question_search','question_get'):
+            if skill['ok'] and skill['name'] in ('question_search','question_get','question_solve'):
                 from ..question_bank.models import GetArgs
                 saved=skill['data']['results']
                 question_texts.extend(q['text'] for q in saved if q.get('text'))
@@ -401,6 +542,12 @@ class UIService:
                 for question in current:
                     for key in ('score','match_reason'):
                         if key in previous.get(question['id'],{}):question[key]=previous[question['id']][key]
+                    from ..question_bank.parts import saved_parts
+                    numbers=saved_parts(question,previous.get(question['id'],{}))
+                    if numbers:
+                        from ..question_bank.repository import BankRepository
+                        with BankRepository(self.agent.question_bank.config.database,readonly=True) as repo:
+                            repo.focus(question,numbers)
                 skill['data']['results']=current
                 skill['data']['question_ids']=[q['id'] for q in current]
                 skill['data']['count']=len(current)
@@ -408,17 +555,38 @@ class UIService:
                     text=question.get('text') if question.get('content_format') in ('markdown','plain') else question.pop('text',None)
                     if text:question_texts.append(text)
                     questions.append(question)
+        from ..question_bank.study import StudyStore
+        with StudyStore(self.agent.question_bank.config.root/'study.sqlite3',self.settings.agent.id,readonly=True) as study:
+            for question in questions:
+                # Image questions keep full source text for durable personal records.
+                full=self.agent.question_bank.get(GetArgs(question_ids=[question['id']])).results
+                if full:question['study']=study.record(full[0])
+        solved=any(s['ok'] and s['name']=='question_solve' for s in skills)
+        if solved:output_kind='question_solved'
         def display_text(text):
             if text is None:return None
             for original in sorted(set(question_texts),key=len,reverse=True):
                 text=text.replace(original,'原题内容请查看下方题目卡片或打开来源文件。')
             return text
-        return {'request_id':reply.request_id,'answer':'此回复的来源已更新或删除，请重新提问。' if removed else display_text(reply.answer),
+        answer=display_text(reply.answer)
+        search_notes=[]
+        search_results=[s for s in skills if s['ok'] and s['name'] in ('question_search','question_get')]
+        if self.data=='study' and search_results and not solved:
+            search_notes=list(dict.fromkeys([*reply.warnings,*[note for s in search_results for note in s['data'].get('warnings',[])]]))
+            failed_selection=any(call.get('status')=='failed' for s in search_results for call in s['data'].get('model_calls',[]))
+            if failed_selection:
+                answer=f'在线筛选未成功，下面是 {len(questions)} 道本地候选题。' if questions else '在线筛选未成功，本地检索也没有返回候选。请稍后重试或调整找题要求。'
+            elif questions:
+                answer=f'找到 {len(questions)} 道题，请查看下方原题。'
+            elif any(s['data']['status']=='no_result' for s in search_results):
+                answer='没有找到符合条件的题目。可展开检索说明，或调整知识点与找题范围。'
+        return {'request_id':reply.request_id,'answer':'此回复的来源已更新或删除，请重新提问。' if removed else '已整理书面参考解答与主要方法，请查看题目卡片。' if solved else answer,
             'questions':questions,
             'output_kind':output_kind,'scope':scope,
             'mode':reply.mode,'stop_reason':reply.stop_reason,'sources':sources,'profile':profile,
             'style':reply.style_examples if not removed else [],'skills':skills,
-            'warnings':['此回复的旧来源已移除。'] if removed else reply.warnings,
+            'warnings':['此回复的旧来源已移除。'] if removed else [] if search_results and self.data=='study' else reply.warnings,
+            'search_notes':search_notes,
             'debug':{'trace':reply.trace,'decision':reply.decision.model_dump(mode='json') if reply.decision else None,
                      'rewritten_question':reply.rewritten_question,'references':[r.model_dump(mode='json') for r in reply.references],
                      'execution':[s.model_dump() for s in reply.execution],'errors':[e.model_dump() for e in reply.errors],
@@ -434,18 +602,21 @@ class UIService:
         import re
         from ..question_bank.conversation import course_mention,named_course,mention_pattern
         courses=self.agent.question_bank.courses()
-        mentioned=course_mention(parsed.question,courses)
+        uploaded=bool(self.agent.question_bank.uploaded_references)
+        mentioned='' if uploaded else course_mention(parsed.question,courses)
         if mentioned:entry=self._question_scope({'session':parsed.session,'course':mentioned})
-        named=named_course(parsed.question,courses)
+        named='' if uploaded else named_course(parsed.question,courses)
         if named and re.search('题库|知识库|找.*题|准备|获取|下载|建立|新增|添加|加入|整理|更新|重试',parsed.question):
             entry=self._question_scope({'session':parsed.session,'course':named})
         selected=entry['question_course']
+        self.agent.question_bank.study_filter=entry.get('study_filter','all')
         content=mention_pattern(courses).sub('',parsed.question).strip(' ，,。')
         personal=re.search(r'微信|个人资料|记忆|我的(?:经历|偏好|计划|生日)|我(?:喜欢|不喜欢|去过|以前|昨天)|记住[：:]|记一下[：:]|纠正事实',content)
-        if selected and content and not personal:
+        if selected and content and not personal and not uploaded:
             status=self.agent.question_bank.status(selected)
-            explicit=bool(re.search('准备|获取.*(?:题库|知识库|资料)|下载.*(?:题库|知识库|资料)|建立|新增|添加|加入|整理|更新|重试',content))
-            if explicit or (status.status=='needs_preparation' and not status.jobs):
+            explicit=bool(re.search('准备|获取.*(?:题库|知识库|资料)|下载.*(?:题库|知识库|资料)|建立|新增|添加|加入|整理.*(?:题库|知识库|资料)|更新|重试',content))
+            course_request=self.data!='study' or bool(re.search('找|题|练习|期末|期中',content))
+            if explicit or (course_request and status.status=='needs_preparation' and not status.jobs):
                 self._prepare_course({'course':selected,'update':'更新' in content})
         reply=self.agent.ask(parsed.question.strip(),parsed.session,scope=entry['scope'],scene=parsed.scene,
             question_course=entry['question_course'])
@@ -487,9 +658,23 @@ class UIService:
         if session:self._question_scope({'session':session,'course':course})
         return {**result,'course':course,'warning':''}
 
-    def _question_image(self,question_id,index):
+    def _question_image(self,question_id,index,parts=''):
         from ..question_bank.models import GetArgs
         result=self.agent.question_bank.get(GetArgs(question_ids=[question_id]))
+        if parts and result.results:
+            from ..question_bank.repository import BankRepository
+            import pymupdf
+            question=result.results[0]
+            with BankRepository(self.agent.question_bank.config.database,readonly=True) as repo:
+                try:repo.focus(question,parts.split(','))
+                except ValueError:raise UIError('小题号无效。',404) from None
+                if index<0 or index>=len(question['image_previews']):raise UIError('小题截图不存在。',404)
+                path=repo.question_pdf(question)
+                if not path:raise UIError('小题原件不存在。',404)
+                preview=question['image_previews'][index]
+                with pymupdf.open(path) as document:
+                    pixmap=document[preview['page']-1].get_pixmap(matrix=pymupdf.Matrix(1.7,1.7),clip=pymupdf.Rect(preview['bbox']))
+                    return pixmap.tobytes('png'),'image/png'
         if not result.results or index<0 or index>=len(result.results[0]['images']):raise UIError('题目图片不存在。',404)
         return self._bank_image(result.results[0]['images'][index])
 
@@ -688,6 +873,7 @@ class UIService:
         return {'name':name,'enabled':enabled}
 
     def _mode(self,mode):
+        if self.data=='study':raise UIError('学习模式使用独立的 ChatGPT 连接，无需本机模型。')
         if mode not in ('demo','live'):raise UIError('模式不正确。')
         if mode=='live' and not self.live_available():raise UIError('真实模型模式需要已配置的本机模型服务。')
         if mode==self.settings.mode:return {'mode':mode}
@@ -700,6 +886,6 @@ class UIService:
         return {'mode':mode}
 
     def close(self):
-        self.wechat_sync.close()
+        if hasattr(self,'wechat_sync'):self.wechat_sync.close()
         def stop():self.agent.close();self.meta.close()
         self.pool.submit(stop).result();self.pool.shutdown()

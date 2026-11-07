@@ -60,7 +60,7 @@ function renderCourseFiles(course,files){
  const list=$('course-files');list.replaceChildren();
  for(const file of files){
   const row=el('div',file.name,'course-file');
-  row.append(el('small',`${courseFileStates[file.status]||file.status} · ${file.questions||0} 条题目记录 · ${{upload:'本地上传',url:'补充网址'}[file.origin_kind]||'公开目录'}${file.member?' · 压缩包内文件':''}${file.remote_removed?' · 远端已移除':''}`));
+  row.append(el('small',`${courseFileStates[file.status]||file.status} · ${file.questions||0} 条题目记录 · ${{upload:'本地上传',url:'补充网址'}[file.origin_kind]||file.repository||'公开目录'}${file.member?' · 压缩包内文件':''}${file.remote_removed?' · 远端已移除':''}`));
   if(file.error)row.append(el('small',file.error));
   for(const note of file.notes||[])row.append(el('small',note));
   if(file.local_available){const link=el('a',file.file_kind==='converted_pdf'?'打开本地转换 PDF':'打开本地原件');link.href='/api/course-source?course='+encodeURIComponent(course.id)+'&source='+file.id;link.target='_blank';link.rel='noopener noreferrer';row.append(link);}

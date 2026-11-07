@@ -2,6 +2,7 @@
 import re
 import sqlite3
 import time
+from contextlib import contextmanager
 
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -17,6 +18,19 @@ class QuestionBank:
         from .semantic import SemanticSearch
         self.semantic = SemanticSearch(config)
         self.similarity = None
+        self.study_owner = 'anotherme'
+        self.study_filter = 'all'
+        self.uploaded_references = []
+
+    @contextmanager
+    def reference_upload(self, question):
+        """One serialized UI turn can compare an upload without importing it."""
+        previous = self.uploaded_references
+        self.uploaded_references = [question]
+        try:
+            yield
+        finally:
+            self.uploaded_references = previous
 
     def courses(self):
         if self.config.database.is_file():
@@ -47,7 +61,7 @@ class QuestionBank:
                     job['status']='interrupted'
                     job['error']='后台进程已结束，可点击“继续收集”处理未完成资料。'
             question_counts=dict(repo.conn.execute('SELECT source_id,count(*) FROM questions GROUP BY source_id'))
-            files=[source_summary(self.config.root,s,question_counts.get(s['id'],0)) for s in repo.sources(course)]
+            files=[source_summary(self.config.root,s,question_counts.get(s['id'],0)) for s in repo.sources(course) if not s['remote_removed']]
             states = coverage['states']
             processed=any(states.get(k,0) for k in ('ready','partial','needs_review','unsupported','expanded'))
             status = 'needs_preparation' if not coverage['questions'] and not processed else 'partial' if not coverage['questions'] or any(k not in ('ready', 'skipped', 'expanded') for k in states) else 'ready'
@@ -68,9 +82,15 @@ class QuestionBank:
             excluded_occurrences = {qid for q in repo.get(args.exclude_ids) for qid in q.get('occurrence_ids',[q['id']])}
             if args.reference_ids and (not set(args.reference_ids)<=reference_occurrences or any(q['course_id']!=repo.course_id(args.course) for q in references)):
                 return QuestionResult(status='invalid_ids',coverage=status.coverage,missing_ids=args.reference_ids)
+            references.extend(q for q in self.uploaded_references if q['course_id']==repo.course_id(args.course))
             candidates = [q for q in repo.rows(args.course, year=args.year, exam=args.exam,
                 category=args.category, question_type=args.question_type)
                 if not set(q.get('occurrence_ids',[q['id']])) & {*args.exclude_ids,*args.reference_ids,*reference_occurrences,*excluded_occurrences}]
+            from .study import StudyStore, matches
+            selected_state = args.study_state if args.study_state != 'all' else self.study_filter
+            if selected_state != 'all':
+                with StudyStore(self.config.root/'study.sqlite3', self.study_owner, readonly=True) as study:
+                    candidates = [q for q in candidates if matches(study.record(q)['state'], selected_state)]
             if not candidates:
                 return QuestionResult(status='no_result', coverage=status.coverage)
             course=next((c for c in self.courses() if c['id']==repo.course_id(args.course)),None)
@@ -119,7 +139,7 @@ class QuestionBank:
                 except Exception as exc:
                     warnings.append(f'本地 BGE 检索不可用（{type(exc).__name__}），本次使用关键词回退；请检查模型或刷新题库索引。')
                     method='keyword_fallback'
-            reasons={}
+            reasons={};matched_parts={}
             if self.config.similar_provider == 'api':
                 try:
                     from .api_model import QuestionAPI
@@ -132,6 +152,7 @@ class QuestionBank:
                     lookup = {candidates[i]['id']: i for i in pool}
                     hits = [lookup[s.id] for s in selection.selected]
                     reasons = {s.id: s.reason for s in selection.selected}
+                    matched_parts = {s.id: s.matched_subquestions for s in selection.selected}
                     model_calls.append(call)
                     method += '+api_selection'
                     if selection.missing:
@@ -156,6 +177,7 @@ class QuestionBank:
                     lookup={candidates[i]['id']:i for i in pool}
                     hits=[lookup[s.id] for s in selection.selected]
                     reasons={s.id:s.reason for s in selection.selected}
+                    matched_parts={s.id:s.matched_subquestions for s in selection.selected}
                     model_calls.append(call);method+='+chatgpt_similar' if references else '+chatgpt_selection'
                     if selection.missing:warnings.append(selection.missing)
                     if call.get('candidate_count',len(pool))<len(candidates):
@@ -172,6 +194,8 @@ class QuestionBank:
                     q.update(score=round(float(scores[i]), 5), match_reason=reasons.get(q['id']) or
                         ('符合筛选条件'+('：'+args.question_type+'题' if args.question_type else '') if browse else
                          '命中知识点：'+'、'.join(sorted(set(wanted) & set(q['topics']))) if wanted else '题干字符匹配'))
+                    if q['id'] in matched_parts:
+                        q['matched_subquestions']=matched_parts[q['id']]
                     results.append(q)
             return QuestionResult(status='ok' if results else 'no_result', question_ids=[q['id'] for q in results],
                 results=results, count=len(results), coverage=status.coverage, truncated=len(hits) > args.limit,
@@ -200,7 +224,7 @@ class QuestionBank:
 
 def citations(result):
     from ..models import Citation
-    if not result.ok or result.name not in ('question_search', 'question_get'):
+    if not result.ok or result.name not in ('question_search', 'question_get', 'question_solve'):
         return []
     return [Citation(source=f"question:{q['id']}", chunk=0, text=q['text'], score=q.get('score', 1),
         subject='general', external_url=q['url'], locations=q['pages'],

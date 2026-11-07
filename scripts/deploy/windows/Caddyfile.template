@@ -1,0 +1,22 @@
+{
+    default_sni __PUBLIC_IP__
+    storage file_system {
+        root "__DATA_DIR__"
+    }
+}
+
+https://__PUBLIC_IP__ {
+    tls {
+        issuer acme {
+            dir https://acme-v02.api.letsencrypt.org/directory
+            profile shortlived
+        }
+    }
+    basic_auth {
+        class __PASSWORD_HASH__
+    }
+    request_body {
+        max_size 110MB
+    }
+    reverse_proxy 127.0.0.1:8501
+}

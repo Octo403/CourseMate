@@ -11,9 +11,9 @@ const skillDescriptions={
 const feedbackLabels={like_me:'像我',unlike_me:'不像我',fact_wrong:'事实不对',fact_correction:'已纠正事实'};
 function el(tag,text,cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node;}
 function notice(message,error=false){$('notice').textContent=message||'';$('notice').className='notice'+(error?' error':'');$('notice').hidden=!message;}
-async function api(path,payload){const options=payload===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)};const response=await fetch(path,options);const body=await response.json();if(!response.ok)throw new Error(body.error||'本地服务暂时不可用');return body;}
+async function api(path,payload){const multipart=typeof FormData!=='undefined'&&payload instanceof FormData;const options=payload===undefined?{}:multipart?{method:'POST',body:payload}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)};const response=await fetch(path,options);const body=await response.json();if(!response.ok)throw new Error(body.error||'本地服务暂时不可用');return body;}
 function date(value){return value?new Date(value*1000).toLocaleString('zh-CN',{hour12:false}):'时间未记录';}
-function setBusy(value){state.busy=value;$('send').disabled=value;$('new-session').disabled=value;$('mode').disabled=value;$('refresh').disabled=value;$('import').disabled=value;$('progress').hidden=!value;document.querySelectorAll('.wechat-form button,.wechat-form input,.wechat-form select,.skill-row input,.delete,.model-form button,.model-form input,.model-form select,.course-form button,.course-form input,.course-form select,.supplement-form button,.supplement-form input,.supplement-form textarea,.question-scope-button,.course-mention-option').forEach(node=>node.disabled=value);if(!value&&$('mineru-sample'))$('mineru-sample').disabled=!$('mineru-sample-source').options.length;}
+function setBusy(value){state.busy=value;$('send').disabled=value;$('new-session').disabled=value;$('mode').disabled=value;$('refresh').disabled=value;$('import').disabled=value;$('progress').hidden=!value;document.querySelectorAll('.wechat-form button,.wechat-form input,.wechat-form select,.skill-row input,.delete,.model-form button,.model-form input,.model-form select,.course-form button,.course-form input,.course-form select,.supplement-form button,.supplement-form input,.supplement-form textarea,.question-scope-button,.course-mention-option,.study-controls button,.study-actions button,#study-filter,#study-library-filter').forEach(node=>node.disabled=value);if(!value&&$('mineru-sample'))$('mineru-sample').disabled=!$('mineru-sample-source').options.length;}
 function detail(title){const node=el('details',undefined,'detail');node.append(el('summary',title));const body=el('div',undefined,'detail-body');node.append(body);return [node,body];}
 function sourceDetails(reply){
  const [node,body]=detail(`事实来源 · ${reply.sources.length}`);
@@ -41,7 +41,21 @@ function renderSessions(){const nav=$('sessions');nav.replaceChildren();for(cons
 async function chooseSession(id){state.session=id;localStorage.setItem('anotherme-session-'+state.bootstrap.data,id);const url=new URL(location.href);url.searchParams.set('session',id);history.replaceState(null,'',url);renderSessions();await refreshHistory();if(state.panel)await refreshMaintenance();}
 async function refreshHistory(){const id=state.session;if(!id)return;try{const history=await api('/api/history?session='+encodeURIComponent(id));if(state.session!==id)return;state.history=history;$('session-title').textContent=history.session.title;$('current-scope').textContent=history.session.scope==='synthetic'?'资料范围：合成资料':history.session.scope?`资料范围：${state.bootstrap.scope_labels?.[history.session.scope]||history.session.scope}`:'仅查询知识资料';if(typeof renderQuestionScope==='function')renderQuestionScope();renderTurns();$('conversation').scrollTop=$('conversation').scrollHeight;}catch(error){notice(error.message,true);}}
 async function refreshBootstrap(){state.bootstrap=await api('/api/bootstrap');renderBootstrap();if(typeof renderQuestionModelBadge==='function')renderQuestionModelBadge();if(typeof renderCourseCatalog==='function')renderCourseCatalog();}
-async function runJob(path,payload){if(state.busy)return;notice('');setBusy(true);try{const {job_id}=await api(path,payload);while(true){const job=await api('/api/job?id='+encodeURIComponent(job_id));$('progress-text').textContent=job.phase;if(job.status==='complete'){if(job.result.warning)notice(job.result.warning);else if(path!=='/api/chat'&&path!=='/api/resume')notice('已完成。');break;}if(job.status==='failed')throw new Error(job.error);await new Promise(resolve=>setTimeout(resolve,350));}setBusy(false);await refreshBootstrap();await refreshHistory();if(state.panel)await refreshMaintenance();return true;}catch(error){setBusy(false);notice(error.message,true);await refreshHistory();return false;}}
+async function runJob(path,payload){
+ if(state.busy)return;notice('');setBusy(true);
+ if($('progress-steps'))$('progress-steps').replaceChildren();
+ try{
+  const {job_id}=await api(path,payload);
+  while(true){
+   const job=await api('/api/job?id='+encodeURIComponent(job_id));$('progress-text').textContent=job.phase;
+   if($('progress-steps'))$('progress-steps').replaceChildren(...(job.steps||[]).map(step=>el('li',step)));
+   if(job.status==='complete'){if(job.result.warning)notice(job.result.warning);else if(!['/api/chat','/api/resume','/api/question-upload'].includes(path))notice('已完成。');break;}
+   if(job.status==='failed')throw new Error(job.error);
+   await new Promise(resolve=>setTimeout(resolve,350));
+  }
+  setBusy(false);await refreshBootstrap();await refreshHistory();if(state.panel)await refreshMaintenance();return true;
+ }catch(error){setBusy(false);notice(error.message,true);await refreshHistory();return false;}
+}
 async function send(){const question=$('message').value.trim();if(!question||state.busy)return;const session=state.session;const scene=$('scene').value||null;$('message').value='';const success=await runJob('/api/chat',{question,session,scene});if(!success&&!state.history?.pending)$('message').value=question;}
 async function refreshMaintenance(){if(!state.session)return;try{const data=await api('/api/maintenance?session='+encodeURIComponent(state.session));$('documents').replaceChildren();for(const document of data.documents){const row=el('div',undefined,'document-row');const info=el('div',document.name);info.append(el('small',`${document.chars} 字`));const remove=el('button','删除','delete');remove.onclick=()=>{if(window.confirm(`删除“${document.name}”？重新导入原文件可恢复资料；现有引用将失效。`))runJob('/api/delete-document',{id:document.id});};row.append(info,remove);$('documents').append(row);}if(!data.documents.length)$('documents').append(el('p','还没有独立导入的 TXT / MD。','empty'));$('skills').replaceChildren();for(const skill of data.skills){const row=el('div',undefined,'skill-row');const label=el('label');const toggle=el('input');toggle.type='checkbox';toggle.checked=skill.enabled;toggle.setAttribute('aria-label',skillLabels[skill.name]||skill.name);toggle.onchange=async()=>{try{await api('/api/skill',{name:skill.name,enabled:toggle.checked});notice('技能设置已保存。');}catch(error){toggle.checked=!toggle.checked;notice(error.message,true);}};const text=el('div',skillLabels[skill.name]||skill.name);text.append(el('small',skillDescriptions[skill.name]||skill.description));label.append(toggle,text);row.append(label);$('skills').append(row);}$('memories').replaceChildren();for(const memory of data.memories||[]){const card=el('div',memory.summary,'fact-card');const category=({plan:'历史计划',preference:'历史偏好',event:'事件',long_term:'长期信息'})[memory.category]||memory.category;card.append(el('small',`${category} · ${date(memory.recorded_at)} · ${memory.source_count} 条清洗来源`));$('memories').append(card);}if(!data.memories?.length)$('memories').append(el('p','当前范围没有可展示的本人训练记忆。','empty'));$('facts').replaceChildren();for(const fact of data.facts){const card=el('div',fact.value,'fact-card');card.append(el('small',`事实 ${fact.id} · ${fact.attribute}`));$('facts').append(card);}if(!data.facts.length)$('facts').append(el('p','当前范围没有本人事实。','empty'));$('profile').replaceChildren();for(const claim of data.profile){const card=el('div',claim.text,'profile-card');card.append(el('small',claim.basis==='observed'?'训练表达统计':'有来源自述'));$('profile').append(card);}if(!data.profile.length)$('profile').append(el('p','当前范围没有启用的表达画像。','empty'));setBusy(state.busy);}catch(error){notice(error.message,true);}}
 async function toggleSettings(open){state.panel=open?'settings':false;$('settings').hidden=!open;$('materials').hidden=true;if(open&&!state.busy){try{await refreshMaintenance();if(typeof refreshModelSettings==='function'&&!state.busy)await refreshModelSettings();}catch(error){notice(error.message,true);}}}
@@ -60,7 +74,11 @@ $('course-library-tab').onclick=()=>openMaterials('course');$('personal-library-
 $('mode').onchange=()=>runJob('/api/mode',{mode:$('mode').value});$('refresh').onclick=()=>runJob('/api/refresh',{});
 $('file').onchange=async()=>{const file=$('file').files[0];if(!file)return;if(file.size>2000000){notice('文件超过 2 MB，请精简后导入。',true);return;}$('document-name').value=file.name;$('document-content').value=await file.text();};
 $('import').onclick=()=>runJob('/api/import',{name:$('document-name').value,content:$('document-content').value});
-async function boot(){try{await refreshBootstrap();const cached=new URLSearchParams(location.search).get('session')||localStorage.getItem('anotherme-session-'+state.bootstrap.data);let session=state.bootstrap.sessions.find(session=>session.id===cached)||state.bootstrap.sessions[0];if(!session){session=await api('/api/session',{scope:state.bootstrap.default_scope});await refreshBootstrap();}await chooseSession(session.id);if(new URLSearchParams(location.search).get('settings')==='1')await toggleSettings(true);else if(typeof maybeShowSetup==='function')await maybeShowSetup();if(state.bootstrap.retrieval_error)notice('检索模型初始化失败，个人事实查询将停止生成。请检查本地模型路径。',true);}catch(error){notice(error.message,true);}}
+async function boot(){
+ // All deferred extensions must install their renderers before the first request.
+ await new Promise(resolve=>document.addEventListener('DOMContentLoaded',resolve,{once:true}));
+ try{await refreshBootstrap();const cached=new URLSearchParams(location.search).get('session')||localStorage.getItem('anotherme-session-'+state.bootstrap.data);let session=state.bootstrap.sessions.find(session=>session.id===cached)||state.bootstrap.sessions[0];if(!session){session=await api('/api/session',{scope:state.bootstrap.default_scope});await refreshBootstrap();}await chooseSession(session.id);if(new URLSearchParams(location.search).get('settings')==='1')await toggleSettings(true);else if(typeof maybeShowSetup==='function')await maybeShowSetup();if(state.bootstrap.retrieval_error)notice('检索模型初始化失败，个人事实查询将停止生成。请检查本地模型路径。',true);}catch(error){notice(error.message,true);}
+}
 boot();
 
 function openQuestionImage(url,label){
@@ -84,32 +102,34 @@ function questionCards(questions){
   const card=el('section',undefined,'question-card');
   const exam=({final:'期末',midterm:'期中'})[q.exam]||q.exam||'考试类别未确认';
   const category=({exam:'试卷',recollection:'回忆题',practice:'练习',unknown:'类别未确认'})[q.category]||q.category;
-  card.append(el('h3',`${q.year||'年份未确认'} · 原题 ${q.number}`),el('small',[exam,category,q.question_type?q.question_type+'题':'题型未确认',q.topics.join(' / ')].filter(Boolean).join(' · ')));
+  card.append(el('h3',`${q.year||'年份未确认'} · 原题 ${q.display_number||q.number}`),el('small',[exam,category,q.question_type?q.question_type+'题':'题型未确认',q.topics.join(' / ')].filter(Boolean).join(' · ')));
   const textQuestion=q.content_format==='markdown'||q.content_format==='plain';
-  if(textQuestion)card.append(renderQuestionText(q.text||'',q.content_format));
+  if(textQuestion)card.append(renderQuestionText(q.matched_text||q.text||'',q.content_format));
+  else if(q.match_instruction)card.append(el('p',q.match_instruction,'muted'));
   const sourceLines=(q.source_pages||[]).filter(page=>page.location_kind==='line').map(page=>page.ordinal);
   if(textQuestion&&sourceLines.length)card.append(el('p',`来源位置：原文件第 ${Math.min(...sourceLines)}–${Math.max(...sourceLines)} 行`,'muted'));
   for(let i=0;i<q.images.length;i++){
    const preview=q.image_previews?.find(p=>p.index===i);const kind=({crop:'原题裁剪图',page:'原卷页面',embedded:'原件内嵌图片',image:'题目附图'})[preview?.kind]||'题目图片';
    const location=preview?.page?questionPageLabel({ordinal:preview.page,location_kind:preview.location_kind,printed_label:preview.printed_label}):'位置待核对';
-   const label=`${kind} ${i+1}/${q.images.length} · 原题 ${q.preview_number||q.number} · ${q.converted_from_word?'Word 转 PDF · ':''}${location}`;
+   const label=`${kind} ${i+1}/${q.images.length} · 原题 ${q.display_number||q.preview_number||q.number} · ${q.converted_from_word?'Word 转 PDF · ':''}${location}`;
    const figure=el('figure',undefined,'question-figure');const button=el('button',undefined,'question-image-button');
-   const url=`/api/question-image?id=${q.id}&index=${i}`;const img=el('img');img.src=url;img.alt=label;img.loading='lazy';button.setAttribute('aria-label',`放大查看 ${label}`);button.onclick=()=>openQuestionImage(url,label);button.append(img);
+   const url=q.study_snapshot?`/api/study-image?item=${q.study.item_id}&index=${i}`:`/api/question-image?id=${q.id}&index=${i}${q.matched_subquestions?.length?'&parts='+encodeURIComponent(q.matched_subquestions.join(',')):''}`;const img=el('img');img.src=url;img.alt=label;img.loading='lazy';button.setAttribute('aria-label',`放大查看 ${label}`);button.onclick=()=>openQuestionImage(url,label);button.append(img);
    img.onerror=()=>figure.replaceChildren(el('p','原题截图加载失败，请打开原文件查看。','muted'));
    figure.append(button,el('figcaption',label+' · 点击放大'));card.append(figure);
   }
   if(!textQuestion&&!q.images.length)card.append(el('p','当前没有可展示的原题截图，可打开原文件核对。','muted'));
   else if(q.image_previews?.length&&q.image_previews.every(p=>p.kind==='embedded'))card.append(el('p','此处为原文件中的附图，完整题目请打开原文件查看。','muted'));
   if(q.missing.length)card.append(el('p',q.missing.join('；'),'warning'));
-  if(q.match_reason)card.append(el('p',q.match_reason));
+  if(q.match_reason){const [reason,body]=detail('匹配说明');body.append(el('p',q.match_reason));card.append(reason);}
   card.append(el('small',q.answer_available?'有来源答案':'未发现可确认配对的来源答案'));
   const pages=q.source_pages||[];
   const pageLinks=el('div',undefined,'question-page-links');
-  for(const page of pages.filter(p=>p.image&&p.location_kind==='page')){const button=el('button',`查看原页 · ${questionPageLabel(page)}`);button.onclick=()=>openQuestionImage(`/api/question-page?id=${q.id}&page=${page.ordinal}`,`原题 ${q.number} · ${questionPageLabel(page)}`);pageLinks.append(button);}
+  for(const page of pages.filter(p=>!q.study_snapshot&&p.image&&p.location_kind==='page')){const button=el('button',`查看原页 · ${questionPageLabel(page)}`);button.onclick=()=>openQuestionImage(`/api/question-page?id=${q.id}&page=${page.ordinal}`,`原题 ${q.number} · ${questionPageLabel(page)}`);pageLinks.append(button);}
   if(pageLinks.childElementCount)card.append(pageLinks);
   const origins=q.origins||[{source_id:q.source_id,path:q.path,member:q.member,url:q.url,number:q.number,pages:q.pages,year:q.year}];
   if(origins.length>1)card.append(el('p',`同题已合并 · ${origins.length} 个出处`,'muted'));
   for(const origin of origins){
+   if(q.study_snapshot){card.append(el('p','保存时的出处：'+(origin.member||origin.path)+' · 原题 '+origin.number,'muted'));continue;}
    const kind=origin.file_kind||'raw';
    if(kind==='remote'&&!/^https?:\/\//i.test(origin.url||'')){card.append(el('p','本地原件已丢失，请重新上传同名文件并选择替换。','muted'));continue;}
    const action=kind==='converted_pdf'?'查看 Word 转换 PDF':kind==='remote'?(origin.member?'下载来源压缩包':'获取来源文件'):`打开${origin.member?'解压后原文件':'原文件'}`;
@@ -118,6 +138,7 @@ function questionCards(questions){
   }
   if(/^https?:\/\//i.test(q.url||'')){const remote=el('a','查看网页来源');remote.href=q.url;remote.target='_blank';remote.rel='noopener noreferrer';card.append(remote);}
   if(q.answers){const [node,body]=detail(q.answers.length?'已有来源答案':'未发现可确认配对的答案');for(const answer of q.answers){body.append(el('p',answer.text));if(answer.missing?.length)body.append(el('p',answer.missing.join('；'),'warning'));for(const origin of answer.origins||[answer]){const kind=({paragraph:'段落',line:'行',page:'页'})[origin.location_kind]||'位置';const action=origin.file_kind==='converted_pdf'?'查看答案转换 PDF':origin.file_kind==='remote'?(origin.member?'下载答案来源压缩包':'获取答案来源文件'):'打开答案原件';const source=el('a',`${action} · ${origin.member||origin.path.split('/').pop()} · ${kind} ${origin.locations.join(', ')}`);source.href=origin.file_kind==='remote'?origin.url:`/api/question-source?id=${q.id}&source=${origin.source_id}`;source.target='_blank';source.rel='noopener noreferrer';body.append(source);}}card.append(node);}
+  if(typeof appendStudyControls==='function')appendStudyControls(card,q);
   box.append(card);
  }
  return box;

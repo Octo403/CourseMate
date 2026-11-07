@@ -98,7 +98,7 @@ def refresh_sources(agent, state):
                 from ..question_bank.models import GetArgs
                 fresh=agent.question_bank.get(GetArgs(question_ids=result.data['question_ids'],
                     include_answer=bool(state['tool_calls'][ordinal].arguments.get('include_answer',False)))) if result.data['question_ids'] else None
-                previous=[{k:v for k,v in q.items() if k not in ('score','match_reason')} for q in result.data['results']]
+                previous=[{k:v for k,v in q.items() if k not in ('score','match_reason','matched_subquestions')} for q in result.data['results']]
                 differs=bool(fresh and fresh.results!=previous)
             else:
                 fresh = agent.skills.execute(state['tool_calls'][ordinal], context)

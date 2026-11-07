@@ -2,6 +2,7 @@
 import base64
 import json
 import mimetypes
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -25,6 +26,27 @@ class QuestionAPI:
         self.config = config
         self.image_root = Path(image_root).resolve()
 
+    def structured(self, prompt, result_type, paths=(), *, phase='question_solution'):
+        attachments = []
+        total = 0
+        for source in paths:
+            path = Path(source).resolve()
+            if not path.is_relative_to(self.image_root) or not path.is_file():
+                raise ValueError('题图已失效或不在题库处理目录内')
+            mime = mimetypes.guess_type(path.name)[0]
+            if mime not in ('image/png', 'image/jpeg', 'image/webp'):
+                raise ValueError('不支持的题图格式')
+            total += path.stat().st_size
+            if len(attachments) >= 12 or total > 8*1024*1024:
+                raise ValueError('完整题图超出本次范围，请补充完整文字题干。')
+            attachments.append({'type': 'image_url', 'image_url': {
+                'url': 'data:'+mime+';base64,'+base64.b64encode(path.read_bytes()).decode('ascii')}})
+        content = [{'type': 'text', 'text': prompt}, *attachments] if attachments else prompt
+        started = time.perf_counter()
+        result = self.config.structured([{'role': 'user', 'content': content}], result_type)
+        return result, {'provider': self.config.provider, 'model': self.config.model, 'phase': phase,
+                        'status': 'ok', 'seconds': time.perf_counter()-started, 'image_count': len(attachments)}
+
     def plan(self, query, previous, *, course='集合与图论'):
         return self.config.structured([
             {'role': 'system', 'content':
@@ -43,6 +65,7 @@ class QuestionAPI:
         def view(question):
             nonlocal used_bytes
             value = {k: question[k] for k in ('id', 'text', 'topics', 'question_type')}
+            value['selection_parts'] = question.get('selection_parts', [])
             value['image_numbers'] = []
             if self.config.images:
                 previews = [p for p in question.get('image_previews', []) if p['kind'] in ('crop', 'page')]
@@ -71,11 +94,17 @@ class QuestionAPI:
              '严格符合 query 的知识点、题型、数学条件和否定条件；有参考题时比较其知识点和解题类型。'
              'OCR 文字可能错误，有题图时以原图为准；图片按 image_numbers 编号。'
              '只选 candidates 中的 ID，最多 limit 道；没有合适题则 selected=[]。'
+             'selection_parts 是同一大题内各道独立小题；非空时 matched_subquestions 必须列出匹配的小题 number。'
+             '例如只命中第4小题则填 ["4"]；不要包含其他知识点的小题。整组相关时列出全部号；selection_parts 为空则填 []。'
              'reason 简述依据，不抄题干，不宣称未经核实的内容；missing 说明缺图、识别不清或无匹配等限制。'},
             {'role': 'user', 'content': content if attachments else content[0]['text']}
         ], SimilarSelection)
         ids = [s.id for s in selection.selected]
         if len(ids) > limit or len(set(ids)) != len(ids) or not set(ids) <= {q['id'] for q in candidates}:
             raise ValueError('模型返回了候选范围以外或重复的题目 ID')
+        from .parts import validate_parts
+        lookup = {q['id']:q for q in candidates}
+        for item in selection.selected:
+            validate_parts(lookup[item.id], item.matched_subquestions)
         return selection, {'provider': self.config.provider, 'model': self.config.model,
             'status': 'ok', 'phase': 'question_selection', 'images': len(attachments)}

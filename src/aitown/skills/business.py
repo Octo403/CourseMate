@@ -244,7 +244,7 @@ class MemoryCorrection(Skill):
 def citations(result):
     if not result.ok or not isinstance(result.data, dict):
         return []
-    if result.name in ('question_search', 'question_get'):
+    if result.name in ('question_search', 'question_get', 'question_solve'):
         from ..question_bank.search import citations as question_citations
         return question_citations(result)
     raw = result.data.get('evidence', [])

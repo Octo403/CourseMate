@@ -538,6 +538,27 @@ def test_failed_directory_refresh_never_removes_existing_sources(bank,monkeypatc
     assert repo.conn.execute('SELECT discovery_error FROM courses WHERE id=?',(COURSE_ID,)).fetchone()[0]
 
 
+def test_saved_job_skips_sources_removed_after_it_was_queued(bank,monkeypatch):
+    from aitown.question_bank import jobs
+    config,repo,service,sources=bank
+    job=create_job(repo,COURSE_ID,source_ids=[sources[0]])
+    with repo.conn:
+        repo.conn.execute('UPDATE sources SET remote_removed=1 WHERE id=?',(sources[0],))
+    class Remote:
+        def __init__(self,*args):pass
+        def download(self,*args,**kwargs):raise AssertionError('Removed sources must not be downloaded')
+        def close(self):pass
+    monkeypatch.setattr(jobs,'GithubSource',Remote)
+    result=jobs.run_job(config,job,progress=lambda s:None)
+    assert result['done']==1 and result['failed']==0
+    assert repo.source(sources[0])['remote_removed']==1
+    assert service.get(GetArgs(question_ids=[q[0] for q in repo.conn.execute('SELECT id FROM questions WHERE source_id=?',(sources[0],))])).results==[]
+    status=service.status(COURSE_ID)
+    assert [f['id'] for f in status.files]==[sources[1]]
+    assert status.coverage['discovered_files']==1 and status.coverage['remote_removed']==1
+    assert service.search(SearchArgs(query='等价关系')).results[0]['source_id']==sources[1]
+
+
 def test_recollection_answer_document_is_never_indexed_as_questions(tmp_path):
     from aitown.question_bank.prepare import parse_file
     from aitown.question_bank.sources import hints

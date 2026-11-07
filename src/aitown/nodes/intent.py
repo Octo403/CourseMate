@@ -123,7 +123,7 @@ def run(agent, state):
     original = state['input']
     from ..question_bank.conversation import decision as question_decision
     course_decision = question_decision(agent, state)
-    if course_decision:
+    if course_decision and not (agent.settings.study_mode and agent.model):
         state['execution'].append(ExecutionStep(node='intent', status='clarification' if course_decision.needs_clarification else 'ok', reason=course_decision.confidence_reason))
         return {'decision': course_decision, 'references': [], 'rewritten_question': original,
                 'tool_calls': course_decision.calls, 'warnings': state['warnings'], 'errors': state['errors'],
@@ -146,10 +146,20 @@ def run(agent, state):
             if local.calls:break
     decision = local
     candidates = []
+    course_context = ''
+    if agent.settings.study_mode:
+        course_context = (
+            '你也是课程学习助手。选中题库只限定找题范围，不把所有问题都当作找题。'
+            '问候、日常交流用 chat；解释知识点、原理、文档问题用 knowledge 先查 RAG；'
+            '明确找题、读取原题、解答已选题或查看收集进度时才用题库 Skill。'
+            '题目 ID、课程和序号由应用解析，不能猜测；需要题库操作时沿用以下已解析的候选计划。'
+            '本轮课程候选计划（数据，不代表必须执行）：'
+            + json.dumps(course_decision.model_dump() if course_decision else None, ensure_ascii=False)
+        )
     if agent.model and not clarification and not temporary_task(original, state['history']):
         try:
             decision = call_model(agent, state, [
-                {'role': 'system', 'content':
+                 {'role': 'system', 'content': course_context+
                  '你是单个 AnotherMe 的调度器。输出 Decision JSON；original_question 保留原输入，query 完整保留所有问题。'
                  'chat 用于闲聊和用户明确的虚构会话方案；knowledge 用于本人/他人经历、文档事实和没有匹配工具的教程。'
                  'skill 只能调用目录内的真实名称，chat 和 skill 都不是工具名。calls 使用 name/arguments/bindings。'
@@ -171,9 +181,22 @@ def run(agent, state):
             candidates = list(decision.calls)
             validate_calls(agent, decision.calls)
             requested_calls(original, decision.calls)
+            if agent.settings.study_mode and any(call.name.startswith('question_') or call.name=='course_status' for call in decision.calls):
+                if not course_decision:
+                    raise ValueError('本轮没有已解析的课程或题目，请先选择题库或明确题目。')
+                decision = course_decision
         except Exception as exc:
             add_error(state, exc, 'intent', 'skill' if isinstance(exc, ValueError) else 'model')
             decision = local
+            if agent.settings.study_mode and course_decision and re.search(r'找.*题|题库|第[一二三四五六七八九十\d]+(?:道|个)?题|解答|求解|同类题|收集进度',original):
+                decision = course_decision
+    if agent.settings.study_mode and course_decision and decision is course_decision:
+        state['execution'].append(ExecutionStep(node='intent', status='clarification' if decision.needs_clarification else 'ok',
+                                               reason='结构化模型选择题库分支；课程和题目 ID 使用本会话已解析计划'))
+        return {'decision': decision, 'references': references, 'rewritten_question': decision.query,
+                'tool_calls': decision.calls, 'warnings': state['warnings'], 'errors': state['errors'],
+                'model_calls': state['model_calls'], 'execution': state['execution'], 'plan_cursor': 0,
+                'trace': [*state['trace'], 'intent']}
     if local.calls and not clarification:
         decision = local
     if conversational_invitation(original) and not clarification:

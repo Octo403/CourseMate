@@ -43,8 +43,8 @@ def launch(config, course=COURSE_ID, *, update=False, max_files=None, source_ids
         if config.similar_provider=='api':
             env['LOCAL_EMBEDDING_DIR']='';env['LOCAL_RERANKER_DIR']=''
         else:
-            if config.embedding_dir:env['LOCAL_EMBEDDING_DIR']=str(config.embedding_dir)
-            if config.reranker_dir:env['LOCAL_RERANKER_DIR']=str(config.reranker_dir)
+            env['LOCAL_EMBEDDING_DIR']=str(config.embedding_dir or '')
+            env['LOCAL_RERANKER_DIR']=str(config.reranker_dir or '')
         env.pop('QUESTION_API_KEY',None)
         command = [sys.executable,'-m','aitown.question_bank','--root',str(config.root.resolve()),'worker','--job-id',str(job_id),'--course',cid]
         try:

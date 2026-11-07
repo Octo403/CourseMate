@@ -103,8 +103,8 @@ def run(home, *, port=8501, open_browser=True, stop=False, progress=None):
         from .ui.service import UIService
         report('[5/5] 初始化本地数据库并启动网页服务……')
         installed = Settings(question_bank_dir=directory/'question_bank')
-        settings = settings_for_ui(installed, directory/'application')
-        service = UIService(settings, directory/'application/ui.sqlite3')
+        settings = settings_for_ui(installed, directory/'application', data='study')
+        service = UIService(settings, directory/'application/ui.sqlite3', data='study')
         server = None
         try:
             for candidate in range(port, min(port+20, 65536)) if port else [0]:

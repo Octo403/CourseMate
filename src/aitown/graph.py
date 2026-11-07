@@ -10,7 +10,7 @@ from .runtime import RuntimeStore, UserStatement
 from .runtime.checkpoints import Checkpoints, TurnPaused
 from .runtime.models import explicit_statement
 from .knowledge import KnowledgeBase
-from .llm import CompatibleModel
+from .llm import create_model
 from .models import AgentState, Reply
 from .skills import default_registry
 from .storage import Repository
@@ -30,7 +30,7 @@ class AnotherMeAgent:
         if settings.mode not in ("demo", "live"):
             raise ValueError("AITOWN_MODE 只能是 demo 或 live")
         self.settings = settings
-        self.model = CompatibleModel(settings) if settings.mode == "live" else None
+        self.model = create_model(settings)
         runtime_path = settings.runtime_database or settings.retrieval_database or settings.style_database or settings.memory_db.with_suffix('.application.sqlite3')
         self.runtime_repository = Repository(runtime_path)
         self.memory = RuntimeStore(self.runtime_repository, settings.history_turns, settings.ttl_hours, settings.context_ttl_seconds)
@@ -43,7 +43,7 @@ class AnotherMeAgent:
         self.skills = default_registry(enable_correction=settings.enable_memory_correction)
         from .question_bank.models import BankConfig
         from .question_bank.search import QuestionBank
-        from .skills.question_bank import QuestionSearch, QuestionGet, CourseStatus
+        from .skills.question_bank import QuestionSearch, QuestionGet, CourseStatus, QuestionSolve
         self.question_bank = QuestionBank(BankConfig(root=settings.question_bank_dir,
             embedding_dir=settings.local_embedding_dir,reranker_dir=settings.local_reranker_dir,
             similar_provider=settings.question_similar_provider,similar_model=settings.question_similar_model,
@@ -53,7 +53,8 @@ class AnotherMeAgent:
             mineru_api_model=settings.mineru_api_model,mineru_python=settings.mineru_python,
             mineru_tier=settings.mineru_tier,pdf_ocr=settings.question_pdf_ocr,
             ocr_columns=settings.question_ocr_columns))
-        for skill in (QuestionSearch(self.question_bank), QuestionGet(self.question_bank), CourseStatus(self.question_bank)):
+        self.question_bank.study_owner = settings.agent.id
+        for skill in (QuestionSearch(self.question_bank), QuestionGet(self.question_bank), CourseStatus(self.question_bank), QuestionSolve(self.question_bank)):
             self.skills.register(skill)
         self.retrieval_repository = None
         self.retriever = None
@@ -69,6 +70,9 @@ class AnotherMeAgent:
                     top_n=settings.retrieval_top_n, top_k=settings.retrieval_top_k)
             except Exception as exc:
                 self.retrieval_error = type(exc).__name__
+        if self.retriever and settings.online_rerank and self.model:
+            from .retrieval.rerank import OnlineReranker
+            self.retriever.reranker = OnlineReranker(self.model)
         self.style_repository = None
         self.style_profile = None
         if settings.style_database:
@@ -86,6 +90,17 @@ class AnotherMeAgent:
             builder.add_conditional_edges(name, self.next_step, {'reflect': 'reflect', 'rag': 'rag', 'skill': 'skill'})
         builder.add_conditional_edges('reflect', lambda s: 'rag' if s.get('needs_supplement') else 'end', {'rag': 'rag', 'end': END})
         self.graph = builder.compile(checkpointer=self.checkpoints.saver)
+
+    def configure_model(self, settings):
+        """Apply an online model change without reopening history or losing plugin state."""
+        model = create_model(settings)
+        previous = self.model
+        self.settings, self.model = settings, model
+        if self.retriever and settings.online_rerank:
+            from .retrieval.rerank import OnlineReranker
+            self.retriever.reranker = OnlineReranker(model) if model else None
+        if previous:
+            previous.close()
 
     @staticmethod
     def next_step(state):

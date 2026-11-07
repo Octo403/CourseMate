@@ -106,6 +106,11 @@ def run_job(config: BankConfig, job_id, *, resume=False, progress=print, build_v
             if sid in done:
                 continue
             source = repo.source(sid)
+            if source['remote_removed']:
+                done.append(sid)
+                with repo.conn:
+                    repo.conn.execute('UPDATE jobs SET done_ids=?,updated_at=? WHERE id=?', (encode(done),time.time(),job_id))
+                continue
             with repo.conn:
                 repo.conn.execute("UPDATE jobs SET current_source=?,stage='download',updated_at=? WHERE id=?", (sid, time.time(), job_id))
             progress(encode({'job_id': job_id, 'source_id': sid, 'stage': 'download', 'done': len(done), 'total': len(ids),

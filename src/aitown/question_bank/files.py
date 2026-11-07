@@ -28,7 +28,7 @@ def source_summary(root, source, question_count=0):
         except (OSError,ValueError):pass
     return {key: source[key] for key in ('id', 'status', 'error', 'remote_removed')} | {
         'name': PurePosixPath(source['member'] or source['path']).name,
-        'path': source['path'], 'member': source['member'], 'url': source['url'],
+        'path': source['path'], 'member': source['member'], 'url': source['url'], 'repository': source['repository'],
         'questions': question_count, 'local_available': kind is not None, 'file_kind': kind,
         'origin_kind': {'user:upload':'upload','user:url':'url'}.get(source['repository'],'catalog'),
         'notes': json.loads(source['notes']), 'links': links,
